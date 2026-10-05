@@ -8,10 +8,10 @@ the complete catalog and for administration.
 
 ## Discovery and execution
 
-1. Call `search_tools` with service/task keywords. It returns five matches by
+1. Call `mcpx_search_tools` with service/task keywords. It returns five matches by
    default, including names, short descriptions, and tool annotations.
-2. Call `get_tool_schema` with one returned name to obtain its full definition.
-3. Call `call_tool` with that name and an `arguments` object matching its schema.
+2. Call `mcpx_get_tool_schema` with one returned name to obtain its full definition.
+3. Call `mcpx_call_tool` with that name and an `arguments` object matching its schema.
 
 Search results omit argument and output schemas. `limit` is capped at 20;
 `offset` and `nextOffset` allow bounded browsing. An exact tool name selects that
@@ -62,7 +62,7 @@ For Claude Code:
 
 Reconnect the client after changing its endpoint. A running conversation may
 retain earlier tool definitions. Update workflow guides that assume upstream
-tools are directly advertised: their names now belong in `call_tool` arguments.
+tools are directly advertised: their names now belong in `mcpx_call_tool` arguments.
 Client permission rules see the generic execution tool; MCPX permissions still
 apply to the underlying target. The execution wrapper is conservatively marked
 as potentially destructive and is not marked read-only.
