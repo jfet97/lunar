@@ -35,6 +35,9 @@ jobs:
       - name: Build and check server types
         working-directory: mcpx
         run: node_modules/.bin/tsc --build packages/mcpx-server/tsconfig.json
+      - name: Build UI toolkit types
+        working-directory: mcpx
+        run: node_modules/.bin/tsc --build packages/toolkit-ui/tsconfig.build.json
       - name: Check UI types
         working-directory: mcpx
         run: npm run typecheck --workspace=packages/ui
