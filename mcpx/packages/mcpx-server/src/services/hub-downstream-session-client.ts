@@ -49,6 +49,7 @@ const inboundSessionSchema = persistedDownstreamSessionDataSchema.transform(
 // domain → wire: validates domain data and serializes SemVer to string
 const outboundSessionSchema = z.object({
   metadata: z.object({
+    toolMode: z.enum(["catalog", "lazy"]).optional(),
     consumerTag: z.string().optional(),
     clientId: z.string(),
     llm: z

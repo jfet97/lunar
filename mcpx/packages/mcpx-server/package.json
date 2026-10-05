@@ -22,6 +22,7 @@
     "prettier:fix": "prettier --write \"./**/*.{ts,tsx,js,json,jsx,css,scss,md}\"",
     "check:all": "node ../../../scripts/check-all.js",
     "check:package": "node ../../../scripts/check-all.js --current",
+    "model:download": "node ../../scripts/download-tool-embedding-model.mjs",
     "tokens:clean": "rm -rf ./.mcpx/tokens",
     "build:deps:one": "cd ../.. && npm run build:deps:one"
   },
@@ -30,6 +31,8 @@
   "license": "ISC",
   "dependencies": {
     "@aigw/core": "file:../../../ai-gateway-shared/public/packages/core",
+    "@huggingface/transformers": "3.8.1",
+    "onnxruntime-web": "1.22.0-dev.20250409-89f8206ba4",
     "@mcpx/shared-model": "1.0.0",
     "@mcpx/toolkit-core": "1.0.0",
     "@mcpx/webapp-protocol": "1.0.0",
