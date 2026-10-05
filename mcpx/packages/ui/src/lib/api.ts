@@ -25,6 +25,7 @@ import type {
   EnabledSkills,
   ScopeSubject,
   FeatureEnabledResponse,
+  LocalExportResponse,
 } from "@mcpx/shared-model";
 import {
   singleToolGroupSchema,
@@ -44,6 +45,7 @@ import {
   skillSchema,
   enabledSkillsResponseSchema,
   skillsFeatureEnabledSchema,
+  localExportResponseSchema,
 } from "@mcpx/shared-model";
 import z from "zod/v4";
 import { getAdminWebserverURL, getMcpxServerURL } from "@/config/api-config";
@@ -482,6 +484,15 @@ class ApiClient {
     return this.request("/saved-setups", listSavedSetupsResponseSchema);
   }
 
+  async exportLocalBackup(): Promise<LocalExportResponse> {
+    return this.requestWithBody(
+      "/backup/export",
+      "POST",
+      {},
+      localExportResponseSchema,
+    );
+  }
+
   async saveSetup(props: { description: string }): Promise<SaveSetupResponse> {
     const { description } = props;
     return this.requestWithBody(
@@ -500,9 +511,7 @@ class ApiClient {
     });
 
     if (!response.ok) {
-      throw new Error(
-        `API request failed: ${response.status} ${response.statusText}`,
-      );
+      throw await getApiError(response);
     }
 
     const data = await response.json();

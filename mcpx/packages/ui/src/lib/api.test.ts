@@ -101,4 +101,72 @@ describe("skill enablement API", () => {
       status: 403,
     });
   });
+
+  it("throws ApiError with the server message when deleting a saved setup fails", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ message: "Hub connection is unavailable" }),
+        {
+          status: 503,
+          statusText: "Service Unavailable",
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(
+      apiClient.deleteSavedSetup({ id: "saved-setup-id" }),
+    ).rejects.toMatchObject({
+      name: "ApiError",
+      message: "Hub connection is unavailable",
+      status: 503,
+    });
+  });
+
+  it("posts a full local export request and validates the coverage response", async () => {
+    const response = {
+      backupId: "mcpx-backup-id",
+      createdAt: "2026-10-05T20:00:00.000Z",
+      destination: "/tmp/mcpx-backups/mcpx-backup-id",
+      included: ["config/app.yaml"],
+      omitted: [{ item: "Claude host client config", reason: "Unavailable" }],
+    };
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify(response), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(apiClient.exportLocalBackup()).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://mcpx.example/backup/export",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: "{}",
+      },
+    );
+  });
+
+  it("preserves the actual local export failure returned by the server", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          message: "Local backup export failed under /tmp/backups: EACCES",
+        }),
+        {
+          status: 500,
+          statusText: "Internal Server Error",
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await expect(apiClient.exportLocalBackup()).rejects.toMatchObject({
+      message: "Local backup export failed under /tmp/backups: EACCES",
+      status: 500,
+    });
+  });
 });

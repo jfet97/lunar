@@ -1,0 +1,74 @@
+name: Check MCPX
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "mcpx/**"
+      - "eslint.review-rules.js"
+      - ".github/workflows/check-mcpx.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcpx-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  regression:
+    if: github.repository_owner == 'jfet97'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: mcpx/package-lock.json
+      - name: Install locked dependencies
+        working-directory: mcpx
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build and check server types
+        working-directory: mcpx
+        run: node_modules/.bin/tsc --build packages/mcpx-server/tsconfig.json
+      - name: Build UI toolkit types
+        working-directory: mcpx
+        run: node_modules/.bin/tsc --build packages/toolkit-ui/tsconfig.build.json
+      - name: Check UI types
+        working-directory: mcpx
+        run: npm run typecheck --workspace=packages/ui
+      - name: Lint changed package files
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha || 'origin/main' }}
+        shell: bash
+        run: |
+          echo '{}' > "$RUNNER_TEMP/empty-lint-suppressions.json"
+          for package in shared-model mcpx-server ui; do
+            mapfile -t files < <(git diff --name-only --diff-filter=ACMR "$BASE_REF"...HEAD -- "mcpx/packages/$package" | sed "s|^mcpx/packages/$package/||" | rg '\.(ts|tsx|js)$' || true)
+            if [ "${#files[@]}" -gt 0 ]; then
+              (cd "mcpx/packages/$package" && ../../node_modules/.bin/eslint --suppressions-location "$RUNNER_TEMP/empty-lint-suppressions.json" "${files[@]}")
+            fi
+          done
+      - name: Check server regressions
+        working-directory: mcpx/packages/mcpx-server
+        run: >-
+          ../../node_modules/.bin/jest --config jest.config.cjs --runInBand --runTestsByPath
+          src/services/paginated-client.test.ts
+          src/services/local-tool-search.test.ts
+          src/services/hub-downstream-session-client.test.ts
+          src/server/lazy-tools.test.ts
+          src/server/lazy-gateway.test.ts
+          src/services/local-saved-setups.test.ts
+          src/services/local-export-service.test.ts
+          src/server/control-plane.test.ts
+          src/services/setup-manager.test.ts
+      - name: Check saved setup UI and API
+        working-directory: mcpx/packages/ui
+        run: ../../node_modules/.bin/vitest run src/pages/SavedSetups.test.tsx src/lib/api.test.ts
+      - name: Build UI
+        working-directory: mcpx
+        run: npm run build:ui
