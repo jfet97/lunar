@@ -16,9 +16,9 @@ function tool(name: string, description = "Read a Confluence page"): Tool {
 describe("lazy tool discovery", () => {
   it("advertises only three tools and does not mark execution read-only", () => {
     expect(LAZY_TOOLS.map((tool) => tool.name)).toEqual([
-      "search_tools",
-      "get_tool_schema",
-      "call_tool",
+      "mcpx_search_tools",
+      "mcpx_get_tool_schema",
+      "mcpx_call_tool",
     ]);
     expect(LAZY_TOOLS[2]?.annotations?.readOnlyHint).toBe(false);
   });
@@ -36,7 +36,7 @@ describe("lazy tool discovery", () => {
       internalNote: "private".repeat(10000),
     } as NonNullable<Tool["annotations"]>;
     const result = await resolveLazyToolRequest(
-      request("search_tools", { query: "confluence", limit: 3 }),
+      request("mcpx_search_tools", { query: "confluence", limit: 3 }),
       catalog,
     );
     expect(result.kind).toBe("result");
@@ -66,7 +66,7 @@ describe("lazy tool discovery", () => {
       tool(`svc__tool_${index}`),
     );
     const result = await resolveLazyToolRequest(
-      request("search_tools", { query: "svc__tool_200" }),
+      request("mcpx_search_tools", { query: "svc__tool_200" }),
       catalog,
     );
     expect(result).toMatchObject({
@@ -78,7 +78,7 @@ describe("lazy tool discovery", () => {
       },
     });
     const schema = await resolveLazyToolRequest(
-      request("get_tool_schema", { name: "svc__tool_200" }),
+      request("mcpx_get_tool_schema", { name: "svc__tool_200" }),
       catalog,
     );
     expect(schema).toMatchObject({
@@ -87,7 +87,7 @@ describe("lazy tool discovery", () => {
     });
   });
 
-  it.each(["get_tool_schema", "call_tool"])(
+  it.each(["mcpx_get_tool_schema", "mcpx_call_tool"])(
     "does not reveal or execute unavailable tools through %s",
     async (name) => {
       const result = await resolveLazyToolRequest(
@@ -109,19 +109,19 @@ describe("lazy tool discovery", () => {
       { query: "page", offset: -1 },
     ]) {
       expect(
-        await resolveLazyToolRequest(request("search_tools", args), []),
+        await resolveLazyToolRequest(request("mcpx_search_tools", args), []),
       ).toMatchObject({ kind: "result", result: { isError: true } });
     }
     expect(
       await resolveLazyToolRequest(
-        request("call_tool", { name: "svc__read", arguments: [] }),
+        request("mcpx_call_tool", { name: "svc__read", arguments: [] }),
         [tool("svc__read")],
       ),
     ).toMatchObject({ kind: "result", result: { isError: true } });
   });
 
   it("unwraps only visible calls and preserves progress and request metadata", async () => {
-    const original = request("call_tool", {
+    const original = request("mcpx_call_tool", {
       name: "svc__read",
       arguments: { id: "42" },
     });

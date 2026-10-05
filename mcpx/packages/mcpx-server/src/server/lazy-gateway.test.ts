@@ -314,7 +314,7 @@ describe("lazy Streamable HTTP gateway", () => {
       expect((await catalog.client.listTools()).tools).toHaveLength(233);
       expect(
         (await lazy.client.listTools()).tools.map((tool) => tool.name),
-      ).toEqual(["search_tools", "get_tool_schema", "call_tool"]);
+      ).toEqual(["mcpx_search_tools", "mcpx_get_tool_schema", "mcpx_call_tool"]);
     } finally {
       await harness.close();
     }
@@ -345,7 +345,7 @@ describe("lazy Streamable HTTP gateway", () => {
         "Bearer caller-token",
       );
       const search = await client.callTool({
-        name: "search_tools",
+        name: "mcpx_search_tools",
         arguments: { query: ALLOWED_NAME },
       });
       expect(JSON.parse(resultText(search)).tools).toEqual([
@@ -353,7 +353,7 @@ describe("lazy Streamable HTTP gateway", () => {
       ]);
 
       const schema = await client.callTool({
-        name: "get_tool_schema",
+        name: "mcpx_get_tool_schema",
         arguments: { name: ALLOWED_NAME },
       });
       expect(JSON.parse(resultText(schema))).toMatchObject({
@@ -363,7 +363,7 @@ describe("lazy Streamable HTTP gateway", () => {
 
       const callMeta = { progressToken: "page-call-1", traceId: "trace-42" };
       const result = await client.callTool({
-        name: "call_tool",
+        name: "mcpx_call_tool",
         arguments: { name: ALLOWED_NAME, arguments: { id: "42" } },
         _meta: callMeta,
       });
@@ -405,14 +405,14 @@ describe("lazy Streamable HTTP gateway", () => {
         "missing__tool",
       ]) {
         const schema = await client.callTool({
-          name: "get_tool_schema",
+          name: "mcpx_get_tool_schema",
           arguments: { name },
         });
         expect(schema.isError).toBe(true);
         expect(resultText(schema)).not.toContain(name);
 
         const call = await client.callTool({
-          name: "call_tool",
+          name: "mcpx_call_tool",
           arguments: { name, arguments: { id: "secret" } },
         });
         expect(call.isError).toBe(true);
@@ -444,7 +444,7 @@ describe("lazy Streamable HTTP gateway", () => {
     try {
       const { client } = await harness.connectClient("/mcp/lazy");
       const params = {
-        name: "call_tool",
+        name: "mcpx_call_tool",
         arguments: { name: ALLOWED_NAME, arguments: { id: "42" } },
         _meta: { progressToken: "deduplicate-1" },
       };

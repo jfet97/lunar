@@ -23,9 +23,9 @@ const callSchema = nameSchema
 
 export const LAZY_TOOLS: Tool[] = [
   {
-    name: "search_tools",
+    name: "mcpx_search_tools",
     description:
-      "Find tools by keywords or exact name. Returns a small shortlist without schemas. Search for a service and task, then use get_tool_schema for the selected name. Use offset to browse more matches.",
+      "Find tools by keywords or exact name. Returns a small shortlist without schemas. Search for a service and task, then use mcpx_get_tool_schema for the selected name. Use offset to browse more matches.",
     inputSchema: {
       type: "object",
       properties: {
@@ -48,9 +48,9 @@ export const LAZY_TOOLS: Tool[] = [
     },
   },
   {
-    name: "get_tool_schema",
+    name: "mcpx_get_tool_schema",
     description:
-      "Get the complete definition and argument schema of one tool returned by search_tools. Inspect it before calling the tool.",
+      "Get the complete definition and argument schema of one tool returned by mcpx_search_tools. Inspect it before calling the tool.",
     inputSchema: {
       type: "object",
       properties: { name: { type: "string", minLength: 1, maxLength: 500 } },
@@ -64,9 +64,9 @@ export const LAZY_TOOLS: Tool[] = [
     },
   },
   {
-    name: "call_tool",
+    name: "mcpx_call_tool",
     description:
-      "Execute a discovered tool by its exact name with arguments matching get_tool_schema. The target may read, write, or delete data; check its description and annotations first. Gateway permissions apply to the target tool.",
+      "Execute a discovered tool by its exact name with arguments matching mcpx_get_tool_schema. The target may read, write, or delete data; check its description and annotations first. Gateway permissions apply to the target tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -85,7 +85,7 @@ export const LAZY_TOOLS: Tool[] = [
 ];
 
 export const LAZY_INSTRUCTIONS =
-  "Tools are loaded on demand. Use search_tools with service/task keywords, get_tool_schema for one chosen tool, then call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire catalog before starting a task.";
+  "Tools are loaded on demand. Use mcpx_search_tools with service/task keywords, mcpx_get_tool_schema for one chosen tool, then mcpx_call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire catalog before starting a task.";
 
 type LazyRequestResolution =
   | { kind: "result"; result: CallToolResult }
@@ -101,7 +101,7 @@ export async function resolveLazyToolRequest(
   ) => rankToolsLexically(tools, query),
 ): Promise<LazyRequestResolution> {
   const args = request.params.arguments ?? {};
-  if (request.params.name === "search_tools") {
+  if (request.params.name === "mcpx_search_tools") {
     const parsed = searchSchema.safeParse(args);
     if (!parsed.success) return invalidArguments(parsed.error.message);
     const { query, limit, offset } = parsed.data;
@@ -126,14 +126,14 @@ export async function resolveLazyToolRequest(
     });
   }
 
-  if (request.params.name === "get_tool_schema") {
+  if (request.params.name === "mcpx_get_tool_schema") {
     const parsed = nameSchema.safeParse(args);
     if (!parsed.success) return invalidArguments(parsed.error.message);
     const tool = visibleTools.find((tool) => tool.name === parsed.data.name);
     return tool ? jsonResult(tool) : unavailableTool();
   }
 
-  if (request.params.name === "call_tool") {
+  if (request.params.name === "mcpx_call_tool") {
     const parsed = callSchema.safeParse(args);
     if (!parsed.success) return invalidArguments(parsed.error.message);
     if (!visibleTools.some((tool) => tool.name === parsed.data.name)) {
@@ -153,7 +153,7 @@ export async function resolveLazyToolRequest(
   }
 
   return errorResult(
-    "Use search_tools, get_tool_schema, or call_tool on this endpoint.",
+    "Use mcpx_search_tools, mcpx_get_tool_schema, or mcpx_call_tool on this endpoint.",
   );
 }
 
