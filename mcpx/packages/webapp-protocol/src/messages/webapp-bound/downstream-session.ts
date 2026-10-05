@@ -26,6 +26,7 @@ const wireClientInfoSchema = z.object({
 
 export const persistedDownstreamSessionDataSchema = z.object({
   metadata: z.object({
+    toolMode: z.enum(["catalog", "lazy"]).optional(),
     consumerTag: z.string().optional(),
     clientId: z.string(),
     llm: z

@@ -38,6 +38,13 @@ import {
   UnknownInternalCapabilityError,
 } from "../services/internal-capabilities-service.js";
 import { BehaviorSetting } from "../services/behavior-service.js";
+import {
+  LAZY_INSTRUCTIONS,
+  LAZY_TOOLS,
+  resolveLazyToolRequest,
+} from "./lazy-tools.js";
+import { LocalToolSearch } from "../services/local-tool-search.js";
+const toolSearches = new WeakMap<Services, LocalToolSearch>();
 const MIN_PROTOCOL_VERSION_FOR_KEEPALIVE = "2025-11-25";
 const MAX_KEEPALIVE_TIMEOUT_RATIO = 0.8;
 type RequestHandler = Parameters<Server["setRequestHandler"]>[1];
@@ -54,6 +61,7 @@ export async function getServer(
   services: Services,
   logger: Logger,
   shouldReturnEmptyServer: boolean,
+  toolMode: "catalog" | "lazy" = "catalog",
 ): Promise<Server> {
   const enabledKinds = enabledCapabilityKinds({
     enableSkillScoping: env.ENABLE_SKILL_SCOPING,
@@ -68,7 +76,10 @@ export async function getServer(
   }
   const server = new Server(
     { name: "mcpx", version: "1.0.0" },
-    { capabilities },
+    {
+      capabilities,
+      ...(toolMode === "lazy" ? { instructions: LAZY_INSTRUCTIONS } : {}),
+    },
   );
   if (shouldReturnEmptyServer) {
     return server;
@@ -78,6 +89,7 @@ export async function getServer(
     ListToolsRequestSchema,
     async (_request, { sessionId }) => {
       logger.info("ListToolsRequest received", { sessionId });
+      if (toolMode === "lazy") return { tools: LAZY_TOOLS };
       const consumer = services.sessions.getConsumerContext(sessionId);
 
       const tools: Tool[] = listVisibleDefinitions(
@@ -245,6 +257,27 @@ export async function getServer(
   server.setRequestHandler(
     CallToolRequestSchema,
     async (request, { sessionId, sendNotification, sendRequest, signal }) => {
+      if (toolMode === "lazy") {
+        const consumer = services.sessions.getConsumerContext(sessionId);
+        const visibleTools = listVisibleDefinitions(
+          services.capabilityResolver.getPermittedTools(consumer),
+          consumer,
+          (cap, context) =>
+            services.internalCapabilities.visibleToolForListing(cap, context),
+        );
+        const existingSearch = toolSearches.get(services);
+        const search = existingSearch ?? new LocalToolSearch(logger);
+        if (!existingSearch) {
+          toolSearches.set(services, search);
+        }
+        const resolved = await resolveLazyToolRequest(
+          request,
+          visibleTools,
+          (tools, query) => search.search(tools, query),
+        );
+        if (resolved.kind === "result") return resolved.result;
+        request = resolved.request;
+      }
       const session = sessionId
         ? services.sessions.getSession(sessionId)
         : undefined;

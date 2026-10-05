@@ -41,6 +41,7 @@ export function buildDownstreamTransportsRouter(
 ): Router {
   const router = Router();
   registerTransportRoutes(router, "/mcp", authGuard, services, logger);
+  registerTransportRoutes(router, "/mcp/lazy", authGuard, services, logger);
   registerTransportRoutes(router, "/sse", authGuard, services, logger);
   registerLegacySseMessagesRoute(router, authGuard, services, logger);
 
@@ -115,6 +116,8 @@ function registerTransportRoutes(
     basePath,
   );
   const transportType = transportFactory.transportType;
+  const toolMode: "catalog" | "lazy" =
+    basePath === "/mcp/lazy" ? "lazy" : "catalog";
   const routeLogger = baseLogger.child({ transportType });
 
   async function tryRestoreStreamableSession(
@@ -135,6 +138,10 @@ function registerTransportRoutes(
       });
     if (!persisted) {
       return false;
+    }
+    if ((persisted.metadata.toolMode ?? "catalog") !== toolMode) {
+      respondTransportMismatch(res);
+      return true;
     }
     const resolvedMetadata = incomingMetadata
       ? mergeMetadata(persisted.metadata, incomingMetadata)
@@ -162,7 +169,7 @@ function registerTransportRoutes(
 
   router.post(basePath, authGuard, async (req, res) => {
     const sessionId = getSessionIdFromRequest(req, transportType);
-    const metadata = extractMetadata(req.headers, req.body);
+    const metadata = { ...extractMetadata(req.headers, req.body), toolMode };
     logMetadataWarnings(metadata, sessionId, routeLogger);
 
     // Initial session creation
@@ -188,6 +195,13 @@ function registerTransportRoutes(
       if (transportType === "streamableHttp" && isInitializeRequest(req.body)) {
         const persisted =
           await services.sessions.loadPersistedDownstreamSession(sessionId);
+        if (
+          persisted &&
+          (persisted.metadata.toolMode ?? "catalog") !== toolMode
+        ) {
+          respondTransportMismatch(res);
+          return;
+        }
         const resolvedMetadata = persisted
           ? mergeMetadata(persisted.metadata, metadata)
           : metadata;
@@ -231,7 +245,10 @@ function registerTransportRoutes(
       respondSessionNotFound(res);
       return;
     }
-    if (session.transport.type !== transportType) {
+    if (
+      session.transport.type !== transportType ||
+      (session.metadata.toolMode ?? "catalog") !== toolMode
+    ) {
       routeLogger.warn("Transport type mismatch", {
         sessionId,
         expected: transportType,
@@ -292,7 +309,10 @@ function registerTransportRoutes(
       respondSessionNotFound(res);
       return;
     }
-    if (session.transport.type !== transportType) {
+    if (
+      session.transport.type !== transportType ||
+      (session.metadata.toolMode ?? "catalog") !== toolMode
+    ) {
       routeLogger.warn("Transport type mismatch", {
         sessionId,
         expected: transportType,
@@ -339,7 +359,10 @@ function registerTransportRoutes(
       respondSessionNotFound(res);
       return;
     }
-    if (session.transport.type !== transportType) {
+    if (
+      session.transport.type !== transportType ||
+      (session.metadata.toolMode ?? "catalog") !== toolMode
+    ) {
       routeLogger.warn("Transport type mismatch", {
         sessionId,
         expected: transportType,
@@ -439,6 +462,7 @@ function mergeMetadata(
         }
       : (incomingAdapter ?? currentAdapter);
   return {
+    toolMode: current.toolMode ?? incoming.toolMode,
     consumerTag: incoming.consumerTag ?? current.consumerTag,
     clientId: current.clientId,
     llm: mergedLlm,
@@ -462,7 +486,7 @@ function mergeMetadata(
 function respondTransportMismatch(res: express.Response): void {
   res
     .status(400)
-    .json(createMcpErrorMessage("Bad Request: Transport type mismatch"));
+    .json(createMcpErrorMessage("Bad Request: Transport or endpoint mismatch"));
 }
 
 function respondMissingSessionId(res: express.Response): void {
@@ -510,6 +534,7 @@ class DownstreamTransportFactory {
       this.services,
       this.logger,
       metadata.isProbe,
+      this.endpointPath === "/mcp/lazy" ? "lazy" : "catalog",
     );
     const streamableSessionId = sessionIdHint ?? randomUUID();
     const eventStore = this.buildEventStore();
@@ -552,6 +577,7 @@ class DownstreamTransportFactory {
       this.services,
       this.logger,
       metadata.isProbe,
+      this.endpointPath === "/mcp/lazy" ? "lazy" : "catalog",
     );
     const eventStore = this.buildEventStore();
     // onsessioninitialized is intentionally omitted. We register the session

@@ -101,3 +101,4 @@ docker-compose*
 # Build artifacts
 dist
 build
+packages/mcpx-server/models

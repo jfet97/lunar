@@ -35,7 +35,7 @@ RUN VERSION_VALUE=$(cat .version | tr -d '\n') && \
     echo "${VERSION_VALUE}" > /tmp/version.env
 
 # Create cache directories and install dependencies once
-RUN npm run build:deps && npm install
+RUN npm run build:deps && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install
 RUN npm run install:mcpx-server && npm run build:mcpx-server
 
 WORKDIR ${HOME}/packages/ui
@@ -51,6 +51,11 @@ RUN ARCH=$(uname -m) && \
 
 WORKDIR ${HOME}
 RUN npm run install:ui && npm run build:ui
+
+FROM --platform=$BUILDPLATFORM node:22.22.3-alpine3.22 AS tool-embedding-model
+WORKDIR /lunar
+COPY ./scripts/download-tool-embedding-model.mjs ./scripts/download-tool-embedding-model.mjs
+RUN node ./scripts/download-tool-embedding-model.mjs
 
 FROM node:22.22.3-alpine3.22 AS mcpx-ui
 ARG UI_PORT
@@ -192,6 +197,7 @@ COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/packages/toolkit-ui/
 COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/packages/toolkit-ui/package.json packages/toolkit-ui/package.json
 COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/packages/mcpx-server/dist/src packages/mcpx-server/dist
 COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/packages/mcpx-server/package.json packages/mcpx-server/package.json
+COPY --from=tool-embedding-model --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/packages/mcpx-server/models packages/mcpx-server/models
 COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/node_modules node_modules
 COPY --from=base --chown=${LUNAR_USER_SHARED_GROUP} ${HOME}/rootfs /
 
