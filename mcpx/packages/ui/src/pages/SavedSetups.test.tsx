@@ -4,19 +4,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   useDeleteSavedSetup,
+  useExportLocalBackup,
   useGetSavedSetups,
   useOverwriteSavedSetup,
   useRestoreSavedSetup,
   useSaveSetup,
 } from "@/data/saved-setups";
 import { useSkills, useSkillsFeatureEnabled } from "@/data/skills";
-import type { SavedSetupItem, Skill } from "@mcpx/shared-model";
+import type {
+  LocalExportResponse,
+  SavedSetupItem,
+  Skill,
+} from "@mcpx/shared-model";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { toast } from "@/components/ui/use-toast";
 
 import SavedSetups from "./SavedSetups";
 
 vi.mock("@/data/saved-setups", () => ({
   useDeleteSavedSetup: vi.fn(),
+  useExportLocalBackup: vi.fn(),
   useGetSavedSetups: vi.fn(),
   useOverwriteSavedSetup: vi.fn(),
   useRestoreSavedSetup: vi.fn(),
@@ -129,6 +136,7 @@ beforeEach(() => {
 
   const mutation = { mutate: vi.fn(), isPending: false } as never;
   vi.mocked(useSaveSetup).mockReturnValue(mutation);
+  vi.mocked(useExportLocalBackup).mockReturnValue(mutation);
   vi.mocked(useRestoreSavedSetup).mockReturnValue(mutation);
   vi.mocked(useDeleteSavedSetup).mockReturnValue(mutation);
   vi.mocked(useOverwriteSavedSetup).mockReturnValue(mutation);
@@ -190,6 +198,85 @@ describe("SavedSetups", () => {
     expect(
       screen.getByText(/current setup \(1 server and 2 skills\)/),
     ).toBeVisible();
+  });
+
+  it("shows the created backup destination and export coverage", () => {
+    const result: LocalExportResponse = {
+      backupId: "backup-1",
+      createdAt: "2026-10-05T20:00:00.000Z",
+      destination: "/tmp/mcpx-backups/backup-1",
+      included: ["config/app.yaml", ".mcpx/tokens/example-tokens.json"],
+      omitted: [{ item: "Claude config", reason: "Not mounted" }],
+    };
+    vi.mocked(useExportLocalBackup).mockReturnValue({
+      mutate: (
+        _variables: unknown,
+        callbacks?: { onSuccess?: (value: LocalExportResponse) => void },
+      ) => callbacks?.onSuccess?.(result),
+      isPending: false,
+    } as never);
+    vi.mocked(useSkillsFeatureEnabled, { partial: true }).mockReturnValue({
+      data: false,
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Export Full Backup" }));
+
+    expect(screen.getByText("/tmp/mcpx-backups/backup-1")).toBeVisible();
+    expect(screen.getByText(".mcpx/tokens/example-tokens.json")).toBeVisible();
+    expect(screen.getByText("Claude config:")).toBeVisible();
+    expect(screen.getByText("Not mounted")).toBeVisible();
+  });
+
+  it("shows the server's actual export error", () => {
+    vi.mocked(useExportLocalBackup).mockReturnValue({
+      mutate: (
+        _variables: unknown,
+        callbacks?: { onError?: (error: Error) => void },
+      ) => callbacks?.onError?.(new Error("Permission denied writing /backup")),
+      isPending: false,
+    } as never);
+    vi.mocked(useSkillsFeatureEnabled, { partial: true }).mockReturnValue({
+      data: false,
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Export Full Backup" }));
+
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Backup export failed",
+        description: "Permission denied writing /backup",
+      }),
+    );
+  });
+
+  it("shows the server's actual save error", () => {
+    vi.mocked(useSaveSetup).mockReturnValue({
+      mutate: (
+        _description: string,
+        callbacks?: { onError?: (error: Error) => void },
+      ) => callbacks?.onError?.(new Error("Hub connection is unavailable")),
+      isPending: false,
+    } as never);
+    vi.mocked(toast).mockClear();
+    vi.mocked(useSkillsFeatureEnabled, { partial: true }).mockReturnValue({
+      data: false,
+    });
+
+    renderPage();
+    fireEvent.click(screen.getByRole("button", { name: "Save Current Setup" }));
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Local setup" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save Setup" }));
+
+    expect(toast).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Error",
+        description: "Hub connection is unavailable",
+      }),
+    );
   });
 });
 

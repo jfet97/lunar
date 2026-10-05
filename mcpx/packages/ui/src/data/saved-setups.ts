@@ -23,6 +23,9 @@ export const useSaveSetup = () => {
   });
 };
 
+export const useExportLocalBackup = () =>
+  useMutation({ mutationFn: () => apiClient.exportLocalBackup() });
+
 export const useDeleteSavedSetup = () => {
   const queryClient = useQueryClient();
 
