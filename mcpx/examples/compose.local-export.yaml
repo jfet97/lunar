@@ -1,0 +1,15 @@
+# merge this service fragment into the host's Compose file when running MCPX in Docker.
+services:
+  mcpx:
+    environment:
+      MCPX_BACKUP_DIR: /mcpx-backups
+      MCPX_EXPORT_COMPOSE_PATH: /host-mcpx/compose.yaml
+      MCPX_EXPORT_IMAGE_PATH: /host-mcpx/image.txt
+      MCPX_EXPORT_CLAUDE_CONFIG_PATH: /host-clients/claude-config.json
+      MCPX_EXPORT_CODEX_CONFIG_PATH: /host-clients/codex-config.toml
+    volumes:
+      - ${HOME}/.config/mcpx/backups:/mcpx-backups
+      - ${HOME}/.config/mcpx/compose.yaml:/host-mcpx/compose.yaml:ro
+      - ${HOME}/.config/mcpx/image.txt:/host-mcpx/image.txt:ro
+      - ${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json:/host-clients/claude-config.json:ro
+      - ${HOME}/.codex/config.toml:/host-clients/codex-config.toml:ro
