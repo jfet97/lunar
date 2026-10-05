@@ -65,6 +65,25 @@ function notionStaticOauth(
 const baseConfig: Config = structuredClone(DEFAULT_CONFIG);
 
 describe("SetupManager", () => {
+  it("captures startup configuration before any Hub change hooks have fired", () => {
+    const config = structuredClone(DEFAULT_CONFIG);
+    config.auth = { enabled: true, header: "startup-auth" };
+    const manager = new SetupManager(
+      { servers: [notionServer] } as UpstreamHandler,
+      { getConfig: () => config } as ConfigService,
+      noOpLogger,
+    );
+
+    expect(manager.captureCurrentSetup()).toMatchObject({
+      targetServers: {
+        notion: {
+          initiation: { type: "streamable-http", url: notionServer.url },
+        },
+      },
+      config: { auth: { enabled: true, header: "startup-auth" } },
+    });
+  });
+
   describe("#buildUserTargetServersChangePayload", () => {
     it("returns payload on first call (no previous state)", () => {
       const manager = createSetupManager();

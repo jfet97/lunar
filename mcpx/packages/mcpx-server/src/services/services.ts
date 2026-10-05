@@ -1,5 +1,6 @@
 import { systemClock } from "@mcpx/toolkit-core/time";
 import { MeterProvider } from "@opentelemetry/sdk-metrics";
+import { homedir } from "node:os";
 import path from "path";
 import { LunarLogger, loggableError } from "@mcpx/toolkit-core/logging";
 import { ConfigService } from "../config.js";
@@ -52,6 +53,8 @@ import {
 } from "./capability-resolver.js";
 import { buildSkillServices, SkillServices } from "./skills/index.js";
 import { BehaviorService } from "./behavior-service.js";
+import { LocalSavedSetups } from "./local-saved-setups.js";
+import { LocalExportService } from "./local-export-service.js";
 
 export interface ServicesOptions {
   hubUrl?: string;
@@ -81,6 +84,8 @@ export class Services {
   private _internalCapabilities: InternalCapabilitiesService;
   private _skills: SkillServices;
   private _toolTokenEstimator: ToolTokenEstimator;
+  private _localSavedSetups: LocalSavedSetups;
+  private _localExportService: LocalExportService;
 
   private logger: LunarLogger;
   private initialized = false;
@@ -93,6 +98,63 @@ export class Services {
   ) {
     this._config = config;
     const startupLogger = logger.child({ component: "Services" });
+
+    const homeDirectory = homedir();
+    const configuredPath = (
+      value: string | undefined,
+      fallback: string,
+    ): string => path.resolve(value ?? fallback);
+    const appConfigPath = path.resolve(env.APP_CONFIG_PATH);
+    const serversConfigPath = path.resolve(env.SERVERS_CONFIG_PATH);
+    const composePath = configuredPath(
+      env.MCPX_EXPORT_COMPOSE_PATH,
+      path.join(homeDirectory, ".config", "mcpx", "compose.yaml"),
+    );
+    const imagePath = configuredPath(
+      env.MCPX_EXPORT_IMAGE_PATH,
+      path.join(homeDirectory, ".config", "mcpx", "image.txt"),
+    );
+    const claudeConfigDirectory = path.resolve(
+      process.env["CLAUDE_CONFIG_DIR"]?.trim() || homeDirectory,
+    );
+    const claudeConfigPath = configuredPath(
+      env.MCPX_EXPORT_CLAUDE_CONFIG_PATH,
+      path.join(claudeConfigDirectory, ".claude.json"),
+    );
+    const codexConfigPath = configuredPath(
+      env.MCPX_EXPORT_CODEX_CONFIG_PATH,
+      path.join(homeDirectory, ".codex", "config.toml"),
+    );
+    this._localSavedSetups = new LocalSavedSetups(
+      path.join(process.cwd(), ".mcpx", "saved-setups"),
+    );
+    this._localExportService = new LocalExportService({
+      backupDirectory: configuredPath(
+        env.MCPX_BACKUP_DIR,
+        path.join(homeDirectory, ".config", "mcpx", "backups"),
+      ),
+      appConfigPath,
+      appConfigSourceRoot: path.dirname(appConfigPath),
+      serversConfigPath,
+      serversConfigSourceRoot: path.dirname(serversConfigPath),
+      stateDirectory: path.join(process.cwd(), ".mcpx"),
+      composePath,
+      composeSourceRoot: env.MCPX_EXPORT_COMPOSE_PATH
+        ? path.dirname(composePath)
+        : homeDirectory,
+      imagePath,
+      imageSourceRoot: env.MCPX_EXPORT_IMAGE_PATH
+        ? path.dirname(imagePath)
+        : homeDirectory,
+      claudeConfigPath,
+      claudeConfigSourceRoot: env.MCPX_EXPORT_CLAUDE_CONFIG_PATH
+        ? path.dirname(claudeConfigPath)
+        : claudeConfigDirectory,
+      codexConfigPath,
+      codexConfigSourceRoot: env.MCPX_EXPORT_CODEX_CONFIG_PATH
+        ? path.dirname(codexConfigPath)
+        : homeDirectory,
+    });
 
     startupLogger.info("Constructing services...");
 
@@ -643,5 +705,15 @@ export class Services {
   get skills(): SkillServices {
     this.ensureInitialized();
     return this._skills;
+  }
+
+  get localSavedSetups(): LocalSavedSetups {
+    this.ensureInitialized();
+    return this._localSavedSetups;
+  }
+
+  get localExportService(): LocalExportService {
+    this.ensureInitialized();
+    return this._localExportService;
   }
 }

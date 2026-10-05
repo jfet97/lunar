@@ -171,6 +171,15 @@ export class SetupManager implements SetupManagerI {
     return this.currentSetup;
   }
 
+  captureCurrentSetup(): CurrentSetup {
+    return {
+      targetServers: Object.fromEntries(
+        this.upstreamHandler.servers.map(SetupManager.targetServerToEntry),
+      ),
+      config: this.normalizeConfig(this.configService.getConfig()),
+    };
+  }
+
   // Hook to run when user-initiated target-servers change occurs
   buildUserTargetServersChangePayload(
     servers: TargetServer[],

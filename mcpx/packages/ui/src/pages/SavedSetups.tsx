@@ -18,14 +18,16 @@ import {
 } from "@/components/ui/tooltip";
 import {
   useDeleteSavedSetup,
+  useExportLocalBackup,
   useGetSavedSetups,
   useOverwriteSavedSetup,
   useRestoreSavedSetup,
   useSaveSetup,
 } from "@/data/saved-setups";
-import type { SavedSetupItem } from "@mcpx/shared-model";
+import type { LocalExportResponse, SavedSetupItem } from "@mcpx/shared-model";
 import {
   Eye,
+  Download,
   Hammer,
   MonitorCog,
   Plus,
@@ -71,6 +73,10 @@ function formatCurrentSetupSummary(
     parts.push(`${pluralizeWithCount(summary.toolGroupCount, "tool group")}`);
   }
   return parts.length > 0 ? parts.join(" and ") : "";
+}
+
+function getErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function ServerIconCell({ name }: { name: string }) {
@@ -131,6 +137,9 @@ export default function SavedSetups() {
   const [selectedSetup, setSelectedSetup] = useState<SavedSetupItem | null>(
     null,
   );
+  const [exportResult, setExportResult] = useState<LocalExportResponse | null>(
+    null,
+  );
   const toastRef = useRef<ReturnType<typeof toast> | null>(null);
 
   const goToDashboard = () => navigate(routes.dashboard);
@@ -154,6 +163,7 @@ export default function SavedSetups() {
     [skillsQuery.data],
   );
   const saveMutation = useSaveSetup();
+  const exportMutation = useExportLocalBackup();
   const restoreMutation = useRestoreSavedSetup();
   const deleteMutation = useDeleteSavedSetup();
   const overwriteMutation = useOverwriteSavedSetup();
@@ -173,10 +183,10 @@ export default function SavedSetups() {
             setPendingAction(null);
             goToDashboard();
           },
-          onError: () => {
+          onError: (error) => {
             toast({
               title: "Error",
-              description: "Failed to restore setup",
+              description: getErrorMessage(error, "Failed to restore setup"),
               variant: "destructive",
             });
           },
@@ -191,10 +201,10 @@ export default function SavedSetups() {
             });
             setPendingAction(null);
           },
-          onError: () => {
+          onError: (error) => {
             toast({
               title: "Error",
-              description: "Failed to overwrite setup",
+              description: getErrorMessage(error, "Failed to overwrite setup"),
               variant: "destructive",
             });
           },
@@ -228,13 +238,26 @@ export default function SavedSetups() {
           });
         }
       },
-      onError: () => {
+      onError: (error) => {
         toast({
           title: "Error",
-          description: "Failed to save setup",
+          description: getErrorMessage(error, "Failed to save setup"),
           variant: "destructive",
         });
       },
+    });
+  };
+
+  const handleExport = () => {
+    exportMutation.mutate(undefined, {
+      onSuccess: (result) => setExportResult(result),
+      onError: (error) =>
+        toast({
+          title: "Backup export failed",
+          description:
+            error instanceof Error ? error.message : "Unknown export error",
+          variant: "destructive",
+        }),
     });
   };
 
@@ -274,10 +297,10 @@ export default function SavedSetups() {
                   toastRef.current = null;
                 }
               },
-              onError: () => {
+              onError: (error) => {
                 toast({
                   title: "Error",
-                  description: "Failed to delete",
+                  description: getErrorMessage(error, "Failed to delete"),
                   variant: "destructive",
                 });
               },
@@ -316,7 +339,16 @@ export default function SavedSetups() {
     <div className="w-full p-6">
       <div className="flex items-start justify-between">
         <h1 className="mcpx-page-title mb-3">Saved Setups</h1>
-        <div className="flex justify-end mb-4">
+        <div className="flex justify-end gap-2 mb-4">
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={handleExport}
+            disabled={exportMutation.isPending}
+          >
+            <Download className="w-4 h-4" />
+            {exportMutation.isPending ? "Exporting..." : "Export Full Backup"}
+          </Button>
           <Button
             size={"lg"}
             onClick={() => setIsSaveDialogOpen(true)}
@@ -630,6 +662,44 @@ export default function SavedSetups() {
                   {actionConfig.saveButtonText}
                 </Button>
               )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={exportResult !== null}
+          onOpenChange={(open) => !open && setExportResult(null)}
+        >
+          <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>Full backup created</DialogTitle>
+              <DialogDescription>
+                Saved to{" "}
+                <code className="break-all">{exportResult?.destination}</code>
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <section>
+                <h3 className="mb-2 font-semibold">Included</h3>
+                <ul className="list-disc space-y-1 pl-5">
+                  {exportResult?.included.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </section>
+              <section>
+                <h3 className="mb-2 font-semibold">Not included</h3>
+                <ul className="list-disc space-y-1 pl-5">
+                  {exportResult?.omitted.map(({ item, reason }) => (
+                    <li key={item}>
+                      <span className="font-medium">{item}:</span> {reason}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            </div>
+            <DialogFooter>
+              <Button onClick={() => setExportResult(null)}>Done</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>
