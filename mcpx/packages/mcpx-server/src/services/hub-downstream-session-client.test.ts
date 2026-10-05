@@ -1,4 +1,5 @@
 import { noOpLogger } from "@aigw/core/logging";
+import { WEBAPP_BOUND_EVENTS } from "@mcpx/webapp-protocol/messages";
 import { HubDownstreamSessionClient } from "./hub-downstream-session-client.js";
 import { HubSocketAdapter } from "./saved-setups-client.js";
 
@@ -43,5 +44,42 @@ describe("HubDownstreamSessionClient.list", () => {
       "1.2.3",
     );
     expect(bad?.data.metadata.clientInfo.adapter?.version).toBeUndefined();
+  });
+
+  it("retains the transport tool mode across persisted session round trips", async () => {
+    const socketCalls: Array<{ event: string; payload: unknown }> = [];
+    const metadata = {
+      clientId: "client-1",
+      clientInfo: { name: "test" },
+      isProbe: false,
+      toolMode: "lazy" as const,
+    };
+    const socket: HubSocketAdapter = {
+      emitWithAck: async (event, envelope) => {
+        socketCalls.push({ event, payload: envelope });
+        if (event === WEBAPP_BOUND_EVENTS.LOAD_DOWNSTREAM_SESSION) {
+          return {
+            success: true,
+            data: { metadata },
+          };
+        }
+        return { success: true };
+      },
+    };
+    const client = new HubDownstreamSessionClient(() => socket, noOpLogger);
+
+    await client.store("lazy-session", { metadata });
+    const restored = await client.load("lazy-session");
+
+    expect(
+      socketCalls.find(
+        (call) => call.event === WEBAPP_BOUND_EVENTS.STORE_DOWNSTREAM_SESSION,
+      )?.payload,
+    ).toMatchObject({
+      payload: {
+        data: { metadata: { toolMode: "lazy" } },
+      },
+    });
+    expect(restored?.metadata.toolMode).toBe("lazy");
   });
 });
