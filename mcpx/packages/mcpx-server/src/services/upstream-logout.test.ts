@@ -15,6 +15,12 @@ import { SystemStateTracker } from "./system-state.js";
 import { ToolTokenEstimator } from "./tool-token-estimator.js";
 import { UpstreamHandler } from "./upstream-handler.js";
 import type { ExtendedClientI } from "./client-extension.js";
+import { ControlPlaneService } from "./control-plane-service.js";
+import {
+  InternalCapabilitiesService,
+  wireInternalCapabilityProvider,
+} from "./internal-capabilities-service.js";
+import { ManagementToolsService } from "./management-tools.js";
 
 describe("upstream OAuth logout", () => {
   let directory: string;
@@ -158,6 +164,57 @@ describe("upstream OAuth logout", () => {
     };
   }
 
+  async function callManagementRemove(
+    harness: Awaited<ReturnType<typeof makeHarness>>,
+  ) {
+    const controlPlane = new ControlPlaneService(
+      harness.state,
+      harness.upstream,
+      harness.config,
+      { get: () => true } as never,
+      { log: jest.fn() } as never,
+      noOpLogger,
+    );
+    const internal = new InternalCapabilitiesService(noOpLogger);
+    const provider = new ManagementToolsService(
+      {
+        controlPlane,
+        upstreamHandler: harness.upstream,
+        setupManager: {} as never,
+        localSavedSetups: {} as never,
+        localExportService: {} as never,
+        hubService: {} as never,
+      } as never,
+      { hasPermission: () => true },
+      () => false,
+      "http://localhost:9523/auth/callback",
+      noOpLogger,
+    );
+    wireInternalCapabilityProvider(provider, internal, harness.registry);
+    const entry = {
+      serverName: "mcpx",
+      capabilityName: "management_remove_server",
+      origin: "internal" as const,
+      definition: {
+        ...harness.registry.servers
+          .get("mcpx")!
+          .tools!.find(
+            ({ definition }) => definition.name === "management_remove_server",
+          )!.definition,
+        name: "mcpx__management_remove_server",
+      },
+    };
+    return internal.dispatchTool(entry, { name: "docs" }, {});
+  }
+
+  function getToolResponseJson(response: {
+    content: Array<{ type: string; text?: string }>;
+  }): Record<string, unknown> {
+    const text = response.content.find((item) => item.type === "text")?.text;
+    if (!text) throw new Error("Expected a text tool result");
+    return JSON.parse(text) as Record<string, unknown>;
+  }
+
   it.each(["docs", "Docs"])(
     "clears credentials and callbacks for %s, retains config and allows fresh login",
     async (serverName) => {
@@ -257,6 +314,83 @@ describe("upstream OAuth logout", () => {
       deletion.mockRestore();
       await harness.upstream.logoutOAuthForServer("docs");
       expect(await fs.readdir(directory)).toEqual([]);
+    } finally {
+      await harness.upstream.shutdown();
+      harness.resolver.shutdown();
+      harness.state.stopRetentionSweep();
+    }
+  });
+
+  it.each(["close", "persistence", "token deletion"] as const)(
+    "returns a management tool error when strict removal fails during %s",
+    async (failure) => {
+      const harness = await makeHarness();
+      try {
+        if (failure === "close") {
+          harness.extended.close.mockRejectedValue(
+            new Error("Unable to close connection"),
+          );
+        } else if (failure === "persistence") {
+          harness.writeConfig.mockImplementation(() => {
+            throw new Error("Unable to persist server configuration");
+          });
+        } else {
+          jest
+            .spyOn(harness.store, "deleteAll")
+            .mockRejectedValue(new Error("Unable to delete credentials"));
+        }
+
+        const response = await callManagementRemove(harness);
+        expect(response.isError).toBe(true);
+        expect(getToolResponseJson(response as never)).not.toHaveProperty(
+          "removed",
+          true,
+        );
+        expect(harness.upstream.servers).toHaveLength(1);
+        expect(harness.upstream.servers).toHaveLength(1);
+      } finally {
+        await harness.upstream.shutdown();
+        harness.resolver.shutdown();
+        harness.state.stopRetentionSweep();
+      }
+    },
+  );
+
+  it.each(["docs", "Docs"] as const)(
+    "confirms management removal and clears credentials for configured name %s",
+    async (serverName) => {
+      const harness = await makeHarness(serverName);
+      const deleteTokens = jest.spyOn(
+        harness.oauth,
+        "deleteOAuthTokensForServer",
+      );
+      try {
+        const response = await callManagementRemove(harness);
+        expect(response.isError).toBeUndefined();
+        expect(getToolResponseJson(response as never)).toEqual({
+          name: "docs",
+          removed: true,
+        });
+        expect(deleteTokens).toHaveBeenCalledWith(serverName);
+        expect(harness.upstream.servers).toEqual([]);
+        expect(await fs.readdir(directory)).toEqual([]);
+      } finally {
+        await harness.upstream.shutdown();
+        harness.resolver.shutdown();
+        harness.state.stopRetentionSweep();
+      }
+    },
+  );
+
+  it("keeps legacy best-effort removal when OAuth token deletion fails", async () => {
+    const harness = await makeHarness();
+    jest
+      .spyOn(harness.store, "deleteAll")
+      .mockRejectedValue(new Error("Unable to delete credentials"));
+    try {
+      await expect(harness.upstream.removeClient("docs")).resolves.toBeUndefined();
+      expect(harness.upstream.servers).toEqual([]);
+      expect(harness.writeConfig).toHaveBeenLastCalledWith([]);
     } finally {
       await harness.upstream.shutdown();
       harness.resolver.shutdown();
