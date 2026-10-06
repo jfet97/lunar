@@ -356,23 +356,31 @@ describe("upstream OAuth logout", () => {
     },
   );
 
-  it("confirms management removal only after strict cleanup succeeds", async () => {
-    const harness = await makeHarness();
-    try {
-      const response = await callManagementRemove(harness);
-      expect(response.isError).toBeUndefined();
-      expect(getToolResponseJson(response as never)).toEqual({
-        name: "docs",
-        removed: true,
-      });
-      expect(harness.upstream.servers).toEqual([]);
-      expect(await fs.readdir(directory)).toEqual([]);
-    } finally {
-      await harness.upstream.shutdown();
-      harness.resolver.shutdown();
-      harness.state.stopRetentionSweep();
-    }
-  });
+  it.each(["docs", "Docs"] as const)(
+    "confirms management removal and clears credentials for configured name %s",
+    async (serverName) => {
+      const harness = await makeHarness(serverName);
+      const deleteTokens = jest.spyOn(
+        harness.oauth,
+        "deleteOAuthTokensForServer",
+      );
+      try {
+        const response = await callManagementRemove(harness);
+        expect(response.isError).toBeUndefined();
+        expect(getToolResponseJson(response as never)).toEqual({
+          name: "docs",
+          removed: true,
+        });
+        expect(deleteTokens).toHaveBeenCalledWith(serverName);
+        expect(harness.upstream.servers).toEqual([]);
+        expect(await fs.readdir(directory)).toEqual([]);
+      } finally {
+        await harness.upstream.shutdown();
+        harness.resolver.shutdown();
+        harness.state.stopRetentionSweep();
+      }
+    },
+  );
 
   it("keeps legacy best-effort removal when OAuth token deletion fails", async () => {
     const harness = await makeHarness();

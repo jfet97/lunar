@@ -651,10 +651,12 @@ export class UpstreamHandler
       // Delete OAuth tokens for remote servers so they don't persist after removal
       if (client.targetServer.type !== "stdio") {
         if (options.strict) {
-          await this.oauthConnectionHandler.deleteOAuthTokensForServer(name);
+          await this.oauthConnectionHandler.deleteOAuthTokensForServer(
+            client.targetServer.name,
+          );
         } else {
           await this.oauthConnectionHandler
-            .deleteOAuthTokensForServer(name)
+            .deleteOAuthTokensForServer(client.targetServer.name)
             .catch((e) => {
               this.logger.warn(
                 "Failed to delete OAuth tokens during server removal",
