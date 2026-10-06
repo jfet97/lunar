@@ -1,9 +1,8 @@
 # Built-in management tools
 
-MCPX registers these tools on `/mcp` by default. On `/mcp/lazy`, the `mcpx`
-server appears in `mcpx_list_servers`; search for a management task, inspect
-the returned schema, and call the selected tool through `mcpx_call_tool`.
-Qualified names start with `mcpx__`, for example
+MCPX registers these tools on `/mcp` by default. On `/mcp/lazy`, permitted
+management tools are advertised directly with the four discovery tools. Call
+them by their qualified names without searching first, for example
 `mcpx__management_add_server`.
 
 | Tool                        | Purpose                                                                             |

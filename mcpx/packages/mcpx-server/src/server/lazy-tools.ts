@@ -7,6 +7,17 @@ import z from "zod/v4";
 
 const MAX_RESULTS = 20;
 const MAX_DESCRIPTION_LENGTH = 300;
+const MANAGEMENT_CAPABILITY_NAMES = new Set([
+  "management_list_servers",
+  "management_add_server",
+  "management_update_server",
+  "management_enable_server",
+  "management_disable_server",
+  "management_remove_server",
+  "management_create_backup",
+  "management_login_server",
+  "management_logout_server",
+]);
 const listServersSchema = z.object({}).strict();
 const searchSchema = z
   .object({
@@ -101,7 +112,25 @@ export const LAZY_TOOLS: Tool[] = [
 ];
 
 export const LAZY_INSTRUCTIONS =
-  "MCPX is a gateway to multiple MCP servers. At the start of a session, call mcpx_list_servers immediately to learn the available server names and descriptions. Tools are loaded on demand. Use mcpx_search_tools with service/task keywords, mcpx_get_tool_schema for one chosen tool, then mcpx_call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire tool catalog before starting a task.";
+  "MCPX is a gateway to multiple MCP servers. At the start of a session, call mcpx_list_servers immediately to learn the available server names and descriptions. Built-in MCPX management tools are available directly when permitted; call them by their mcpx__management_* names without searching first. Upstream tools are loaded on demand. Use mcpx_search_tools with service/task keywords, mcpx_get_tool_schema for one chosen upstream tool, then mcpx_call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire upstream catalog before starting a task.";
+
+export interface LazyManagementCapability {
+  serverName: string;
+  capabilityName: string;
+  origin: string;
+  definition: { name: string };
+}
+
+export function isLazyManagementCapability(
+  capability: LazyManagementCapability,
+): boolean {
+  return (
+    capability.serverName === "mcpx" &&
+    capability.origin === "internal" &&
+    MANAGEMENT_CAPABILITY_NAMES.has(capability.capabilityName) &&
+    capability.definition.name === `mcpx__${capability.capabilityName}`
+  );
+}
 
 export interface LazyServer {
   name: string;
@@ -121,6 +150,7 @@ export async function resolveLazyToolRequest(
     query,
   ) => rankToolsLexically(tools, query),
   listServers: () => LazyServer[] = () => [],
+  directManagementToolNames: ReadonlySet<string> = new Set(),
 ): Promise<LazyRequestResolution> {
   const args = request.params.arguments ?? {};
   if (request.params.name === "mcpx_list_servers") {
@@ -186,8 +216,12 @@ export async function resolveLazyToolRequest(
     };
   }
 
+  if (directManagementToolNames.has(request.params.name)) {
+    return { kind: "call", request };
+  }
+
   return errorResult(
-    "Use mcpx_list_servers, mcpx_search_tools, mcpx_get_tool_schema, or mcpx_call_tool on this endpoint.",
+    "Use a permitted built-in management tool directly, or use mcpx_list_servers, mcpx_search_tools, mcpx_get_tool_schema, or mcpx_call_tool for upstream tools on this endpoint.",
   );
 }
 

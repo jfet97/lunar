@@ -41,6 +41,7 @@ import {
   LAZY_INSTRUCTIONS,
   LAZY_TOOLS,
   LazyServer,
+  isLazyManagementCapability,
   resolveLazyToolRequest,
 } from "./lazy-tools.js";
 import { LocalToolSearch } from "../services/local-tool-search.js";
@@ -91,11 +92,21 @@ export async function getServer(
     ListToolsRequestSchema,
     async (_request, { sessionId }) => {
       logger.info("ListToolsRequest received", { sessionId });
-      if (toolMode === "lazy") return { tools: LAZY_TOOLS };
       const consumer = services.sessions.getConsumerContext(sessionId);
 
+      const permittedTools =
+        services.capabilityResolver.getPermittedTools(consumer);
+      if (toolMode === "lazy") {
+        const managementTools = listLazyManagementTools(
+          permittedTools,
+          consumer,
+          services,
+        );
+        return { tools: [...LAZY_TOOLS, ...managementTools] };
+      }
+
       const tools: Tool[] = listVisibleDefinitions(
-        services.capabilityResolver.getPermittedTools(consumer),
+        permittedTools,
         consumer,
         (cap, consumer) =>
           services.internalCapabilities.visibleToolForListing(cap, consumer),
@@ -269,6 +280,11 @@ export async function getServer(
           (cap, context) =>
             services.internalCapabilities.visibleToolForListing(cap, context),
         );
+        const directManagementToolNames = new Set(
+          listLazyManagementTools(permittedTools, consumer, services).map(
+            (tool) => tool.name,
+          ),
+        );
         const existingSearch = toolSearches.get(services);
         const search = existingSearch ?? new LocalToolSearch(logger);
         if (!existingSearch) {
@@ -287,6 +303,7 @@ export async function getServer(
             );
             return listVisibleLazyServers(services, serverNames);
           },
+          directManagementToolNames,
         );
         if (resolved.kind === "result") return resolved.result;
         request = resolved.request;
@@ -663,6 +680,19 @@ function listVisibleDefinitions<T>(
     const visible = visibleForListing(cap, consumer);
     return visible ? [visible] : [];
   });
+}
+
+function listLazyManagementTools(
+  permittedTools: ActiveCapability<Tool>[],
+  consumer: ConsumerContext,
+  services: Services,
+): Tool[] {
+  return listVisibleDefinitions(
+    permittedTools.filter(isLazyManagementCapability),
+    consumer,
+    (capability, context) =>
+      services.internalCapabilities.visibleToolForListing(capability, context),
+  );
 }
 
 function listVisibleLazyServers(

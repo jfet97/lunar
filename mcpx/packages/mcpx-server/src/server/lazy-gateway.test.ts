@@ -382,7 +382,7 @@ describe("lazy Streamable HTTP gateway", () => {
     else process.env["INSTANCE_ID"] = previousInstanceId;
   });
 
-  it("keeps the full catalog endpoint and advertises four lazy tools with startup guidance", async () => {
+  it("keeps the full catalog endpoint and advertises four lazy discovery tools with startup guidance", async () => {
     const entries = Array.from({ length: 233 }, (_, index) =>
       makeEntry("docs", `tool_${index}`, `docs__tool_${index}`),
     );
@@ -437,9 +437,11 @@ describe("lazy Streamable HTTP gateway", () => {
         localExportService: { create: jest.fn() },
         hubService: { savedSetups: { saveSetup: jest.fn() } },
       } as unknown as NonNullable<HarnessOptions["management"]>["services"];
+      let logoutAllowed = true;
       const permissions = {
         hasPermission: jest.fn(
-          ({ capabilityName }) => capabilityName !== "management_logout_server",
+          ({ capabilityName }) =>
+            capabilityName !== "management_logout_server" || logoutAllowed,
         ),
       };
       const harness = await makeHarness({
@@ -448,20 +450,31 @@ describe("lazy Streamable HTTP gateway", () => {
       try {
         const { client } = await harness.connectClient(endpoint);
         if (endpoint === "/mcp") {
-          const names = (await client.listTools()).tools.map(
-            (tool) => tool.name,
-          );
+          let names = (await client.listTools()).tools.map((tool) => tool.name);
           expect(names).toContain("mcpx__management_add_server");
+          expect(names).toContain("mcpx__management_logout_server");
+          logoutAllowed = false;
+          names = (await client.listTools()).tools.map((tool) => tool.name);
           expect(names).not.toContain("mcpx__management_logout_server");
         } else {
-          expect(
-            (await client.listTools()).tools.map((tool) => tool.name),
-          ).toEqual([
-            "mcpx_list_servers",
-            "mcpx_search_tools",
-            "mcpx_get_tool_schema",
+          let lazyTools = (await client.listTools()).tools;
+          expect(lazyTools).toHaveLength(13);
+          expect(lazyTools.map((tool) => tool.name)).toContain(
+            "mcpx__management_logout_server",
+          );
+          logoutAllowed = false;
+          lazyTools = (await client.listTools()).tools;
+          expect(lazyTools).toHaveLength(12);
+          expect(lazyTools.map((tool) => tool.name)).toContain(
+            "mcpx__management_add_server",
+          );
+          expect(lazyTools.map((tool) => tool.name)).not.toContain(
+            "mcpx__management_logout_server",
+          );
+          expect(lazyTools.map((tool) => tool.name)).toContain(
             "mcpx_call_tool",
-          ]);
+          );
+          expect(client.getInstructions()).toContain("without searching first");
           const servers = JSON.parse(
             resultText(
               await client.callTool({
@@ -499,7 +512,7 @@ describe("lazy Streamable HTTP gateway", () => {
         }
 
         const call =
-          endpoint === "/mcp"
+          endpoint === "/mcp" || endpoint === "/mcp/lazy"
             ? await client.callTool({
                 name: "mcpx__management_add_server",
                 arguments: {
@@ -523,10 +536,11 @@ describe("lazy Streamable HTTP gateway", () => {
           type: "sse",
           url: "https://notes.example/mcp",
         });
+        expect(harness.upstreamCallTool).not.toHaveBeenCalled();
 
         const hiddenName = "mcpx__management_logout_server";
         const hiddenCall =
-          endpoint === "/mcp"
+          endpoint === "/mcp" || endpoint === "/mcp/lazy"
             ? client.callTool({
                 name: hiddenName,
                 arguments: { name: "notes" },
@@ -540,7 +554,7 @@ describe("lazy Streamable HTTP gateway", () => {
         } else {
           const response = await hiddenCall;
           expect(response.isError).toBe(true);
-          expect(resultText(response)).toMatch(/unavailable/i);
+          expect(resultText(response)).toMatch(/permitted/i);
         }
         expect(
           managementServices.upstreamHandler.logoutOAuthForServer,
@@ -551,7 +565,7 @@ describe("lazy Streamable HTTP gateway", () => {
     },
   );
 
-  it("rechecks management permissions on lazy execution after discovery", async () => {
+  it("rechecks management permissions after listing and schema lookup", async () => {
     let logoutAllowed = true;
     const logoutOAuthForServer = jest.fn();
     const managementServices = {
@@ -591,25 +605,58 @@ describe("lazy Streamable HTTP gateway", () => {
     try {
       const { client } = await harness.connectClient("/mcp/lazy");
       const toolName = "mcpx__management_logout_server";
-      const search = JSON.parse(
+      const listed = (await client.listTools()).tools.map((tool) => tool.name);
+      expect(listed).toContain(toolName);
+      const schema = JSON.parse(
         resultText(
           await client.callTool({
-            name: "mcpx_search_tools",
-            arguments: { query: toolName },
+            name: "mcpx_get_tool_schema",
+            arguments: { name: toolName },
           }),
         ),
       );
-      expect(search.tools.map((tool: { name: string }) => tool.name)).toContain(
-        toolName,
-      );
+      expect(schema.name).toBe(toolName);
       logoutAllowed = false;
+      expect(
+        (await client.listTools()).tools.map((tool) => tool.name),
+      ).not.toContain(toolName);
       const deniedCall = await client.callTool({
-        name: "mcpx_call_tool",
-        arguments: { name: toolName, arguments: { name: "docs" } },
+        name: toolName,
+        arguments: { name: "docs" },
       });
       expect(deniedCall.isError).toBe(true);
-      expect(resultText(deniedCall)).toMatch(/unavailable/i);
       expect(logoutOAuthForServer).not.toHaveBeenCalled();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("does not directly advertise or dispatch spoofed and dynamic internal tools", async () => {
+    const spoofedName = "mcpx__management_add_server";
+    const dynamicName = "dynamic__runtime_tool";
+    const harness = await makeHarness({
+      entries: [
+        makeEntry("docs", "management_add_server", spoofedName, "upstream"),
+        makeEntry("dynamic", "runtime_tool", dynamicName, "internal"),
+      ],
+      deniedNames: new Set(),
+      inactiveServers: new Set(),
+      hiddenNames: new Set(),
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp/lazy");
+      const names = (await client.listTools()).tools.map((tool) => tool.name);
+      expect(names).toEqual([
+        "mcpx_list_servers",
+        "mcpx_search_tools",
+        "mcpx_get_tool_schema",
+        "mcpx_call_tool",
+      ]);
+      for (const name of [spoofedName, dynamicName]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).toBe(true);
+      }
+      expect(harness.upstreamCallTool).not.toHaveBeenCalled();
     } finally {
       await harness.close();
     }
@@ -663,7 +710,7 @@ describe("lazy Streamable HTTP gateway", () => {
       cacheEnabled: true,
     });
     try {
-      const { client } = await harness.connectClient("/mcp");
+      const { client } = await harness.connectClient("/mcp/lazy");
       const request = {
         name: "mcpx__management_list_servers",
         arguments: {},
