@@ -40,9 +40,12 @@ import { BehaviorSetting } from "../services/behavior-service.js";
 import {
   LAZY_INSTRUCTIONS,
   LAZY_TOOLS,
+  LazyServer,
   resolveLazyToolRequest,
 } from "./lazy-tools.js";
 import { LocalToolSearch } from "../services/local-tool-search.js";
+import { normalizeServerName } from "@mcpx/toolkit-core/data";
+import { isConnected } from "../services/target-client-types.js";
 const toolSearches = new WeakMap<Services, LocalToolSearch>();
 const MIN_PROTOCOL_VERSION_FOR_KEEPALIVE = "2025-11-25";
 const MAX_KEEPALIVE_TIMEOUT_RATIO = 0.8;
@@ -258,8 +261,10 @@ export async function getServer(
     async (request, { sessionId, sendNotification, sendRequest, signal }) => {
       if (toolMode === "lazy") {
         const consumer = services.sessions.getConsumerContext(sessionId);
+        const permittedTools =
+          services.capabilityResolver.getPermittedTools(consumer);
         const visibleTools = listVisibleDefinitions(
-          services.capabilityResolver.getPermittedTools(consumer),
+          permittedTools,
           consumer,
           (cap, context) =>
             services.internalCapabilities.visibleToolForListing(cap, context),
@@ -273,6 +278,15 @@ export async function getServer(
           request,
           visibleTools,
           (tools, query) => search.search(tools, query),
+          () => {
+            const visibleNames = new Set(visibleTools.map((tool) => tool.name));
+            const serverNames = new Set(
+              permittedTools
+                .filter((cap) => visibleNames.has(cap.definition.name))
+                .map((cap) => cap.serverName),
+            );
+            return listVisibleLazyServers(services, serverNames);
+          },
         );
         if (resolved.kind === "result") return resolved.result;
         request = resolved.request;
@@ -623,6 +637,28 @@ function listVisibleDefinitions<T>(
     if (cap.origin !== "internal") return [cap.definition];
     const visible = visibleForListing(cap, consumer);
     return visible ? [visible] : [];
+  });
+}
+
+function listVisibleLazyServers(
+  services: Services,
+  serverNames: Set<string>,
+): LazyServer[] {
+  const catalog = services.catalogManager.getCatalog();
+  return [...serverNames].sort().flatMap((name) => {
+    const client = services.upstreamHandler.clientsByService.get(name);
+    if (!client) return [];
+    const catalogEntry = catalog.find((entry) =>
+      client.targetServer.catalogItemId
+        ? entry.id === client.targetServer.catalogItemId
+        : normalizeServerName(entry.name) === name,
+    );
+    const serverInfo = isConnected(client)
+      ? client.extendedClient.serverInfo
+      : undefined;
+    const description =
+      serverInfo?.description?.trim() || catalogEntry?.description?.trim();
+    return [{ name, ...(description ? { description } : {}) }];
   });
 }
 

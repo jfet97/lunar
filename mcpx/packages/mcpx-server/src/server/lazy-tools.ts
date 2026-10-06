@@ -7,6 +7,7 @@ import z from "zod/v4";
 
 const MAX_RESULTS = 20;
 const MAX_DESCRIPTION_LENGTH = 300;
+const listServersSchema = z.object({}).strict();
 const searchSchema = z
   .object({
     query: z.string().trim().min(1).max(500),
@@ -22,6 +23,21 @@ const callSchema = nameSchema
   .strict();
 
 export const LAZY_TOOLS: Tool[] = [
+  {
+    name: "mcpx_list_servers",
+    description:
+      "Call this first when connecting to MCPX. Lists the MCP servers with tools visible to you, including their existing descriptions when available. Use a returned server name with mcpx_search_tools to find tools for your task.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: {
+      readOnlyHint: true,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
   {
     name: "mcpx_search_tools",
     description:
@@ -85,7 +101,12 @@ export const LAZY_TOOLS: Tool[] = [
 ];
 
 export const LAZY_INSTRUCTIONS =
-  "Tools are loaded on demand. Use mcpx_search_tools with service/task keywords, mcpx_get_tool_schema for one chosen tool, then mcpx_call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire catalog before starting a task.";
+  "MCPX is a gateway to multiple MCP servers. At the start of a session, call mcpx_list_servers immediately to learn the available server names and descriptions. Tools are loaded on demand. Use mcpx_search_tools with service/task keywords, mcpx_get_tool_schema for one chosen tool, then mcpx_call_tool with its exact name and arguments. Search results omit schemas and are bounded; use offset for additional matches. Do not list the entire tool catalog before starting a task.";
+
+export interface LazyServer {
+  name: string;
+  description?: string;
+}
 
 type LazyRequestResolution =
   | { kind: "result"; result: CallToolResult }
@@ -99,8 +120,21 @@ export async function resolveLazyToolRequest(
     tools,
     query,
   ) => rankToolsLexically(tools, query),
+  listServers: () => LazyServer[] = () => [],
 ): Promise<LazyRequestResolution> {
   const args = request.params.arguments ?? {};
+  if (request.params.name === "mcpx_list_servers") {
+    const parsed = listServersSchema.safeParse(args);
+    if (!parsed.success) return invalidArguments(parsed.error.message);
+    return jsonResult({
+      servers: listServers().map(({ name, description }) => ({
+        name,
+        ...(description
+          ? { description: description.slice(0, MAX_DESCRIPTION_LENGTH) }
+          : {}),
+      })),
+    });
+  }
   if (request.params.name === "mcpx_search_tools") {
     const parsed = searchSchema.safeParse(args);
     if (!parsed.success) return invalidArguments(parsed.error.message);
@@ -153,7 +187,7 @@ export async function resolveLazyToolRequest(
   }
 
   return errorResult(
-    "Use mcpx_search_tools, mcpx_get_tool_schema, or mcpx_call_tool on this endpoint.",
+    "Use mcpx_list_servers, mcpx_search_tools, mcpx_get_tool_schema, or mcpx_call_tool on this endpoint.",
   );
 }
 

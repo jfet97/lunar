@@ -75,6 +75,7 @@ jobs:
           src/services/local-export-service.test.ts
           src/server/control-plane.test.ts
           src/services/setup-manager.test.ts
+          src/services/client-extension.test.ts
       - name: Check saved setup UI and API
         working-directory: mcpx/packages/ui
         run: ../../node_modules/.bin/vitest run src/pages/SavedSetups.test.tsx src/lib/api.test.ts

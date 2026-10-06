@@ -14,13 +14,57 @@ function tool(name: string, description = "Read a Confluence page"): Tool {
 }
 
 describe("lazy tool discovery", () => {
-  it("advertises only three tools and does not mark execution read-only", () => {
+  it("advertises four tools and does not mark execution read-only", () => {
     expect(LAZY_TOOLS.map((tool) => tool.name)).toEqual([
+      "mcpx_list_servers",
       "mcpx_search_tools",
       "mcpx_get_tool_schema",
       "mcpx_call_tool",
     ]);
-    expect(LAZY_TOOLS[2]?.annotations?.readOnlyHint).toBe(false);
+    expect(
+      LAZY_TOOLS.find((tool) => tool.name === "mcpx_call_tool")?.annotations
+        ?.readOnlyHint,
+    ).toBe(false);
+  });
+
+  it("lists server names with bounded existing descriptions and no extra metadata", async () => {
+    const result = await resolveLazyToolRequest(
+      request("mcpx_list_servers", {}),
+      [],
+      undefined,
+      () => [
+        { name: "docs", description: "d".repeat(10000), privateNote: "secret" },
+        { name: "custom" },
+      ],
+    );
+    expect(result).toEqual({
+      kind: "result",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              servers: [
+                { name: "docs", description: "d".repeat(300) },
+                { name: "custom" },
+              ],
+            }),
+          },
+        ],
+      },
+    });
+  });
+
+  it("rejects unexpected server-list arguments before retrieving metadata", async () => {
+    const listServers = jest.fn(() => []);
+    const result = await resolveLazyToolRequest(
+      request("mcpx_list_servers", { includeSecrets: true }),
+      [],
+      undefined,
+      listServers,
+    );
+    expect(result).toMatchObject({ kind: "result", result: { isError: true } });
+    expect(listServers).not.toHaveBeenCalled();
   });
 
   it("bounds discovery output, truncates descriptions, and omits schemas", async () => {

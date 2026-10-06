@@ -1,6 +1,6 @@
 # On-demand tool discovery
 
-Connect an MCP client to `http://localhost:9000/mcp/lazy` to expose three tools
+Connect an MCP client to `http://localhost:9000/mcp/lazy` to expose four tools
 instead of the complete upstream catalog. This endpoint is built into MCPX and
 uses the same authentication, upstream connections, permissions, and sessions.
 The existing `/mcp` and `/sse` endpoints remain available for clients that need
@@ -8,10 +8,22 @@ the complete catalog and for administration.
 
 ## Discovery and execution
 
-1. Call `mcpx_search_tools` with service/task keywords. It returns five matches by
+1. Call `mcpx_list_servers` with no arguments at the start of the session. It
+   returns the names of MCP servers with tools visible to the caller, plus
+   existing descriptions when available. Startup instructions recommend making
+   this call immediately after connecting.
+2. Call `mcpx_search_tools` with service/task keywords. It returns five matches by
    default, including names, short descriptions, and tool annotations.
-2. Call `mcpx_get_tool_schema` with one returned name to obtain its full definition.
-3. Call `mcpx_call_tool` with that name and an `arguments` object matching its schema.
+3. Call `mcpx_get_tool_schema` with one returned name to obtain its full definition.
+4. Call `mcpx_call_tool` with that name and an `arguments` object matching its schema.
+
+Server descriptions come from the upstream initialization response, falling
+back to the existing MCPX catalog entry. Missing descriptions are omitted;
+MCPX does not infer them from tool descriptions. Descriptions are limited to
+300 characters. Listing servers reads local metadata and makes no upstream
+tool calls. It omits servers with no visible tools, including blocked or
+inactive integrations. A server awaiting authentication can appear when its
+authentication tool is visible. Permissions are checked again on every call.
 
 Search results omit argument and output schemas. `limit` is capped at 20;
 `offset` and `nextOffset` allow bounded browsing. An exact tool name selects that

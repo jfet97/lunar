@@ -55,7 +55,8 @@ export type OriginalClientI = Pick<
   | "getPrompt"
   | "setNotificationHandler"
   | "ping"
->;
+> &
+  Partial<Pick<Client, "getServerVersion">>;
 
 // "method-not-found":
 // -32601 means the server is alive but doesn't implement ping.
@@ -81,6 +82,7 @@ export interface ExtendedClientBuilderI {
 }
 
 export interface ExtendedClientI {
+  readonly serverInfo?: ReturnType<Client["getServerVersion"]>;
   close(): Promise<void>;
   listTools(): Promise<ExtendedListToolsResponse>;
   callTool(
@@ -145,6 +147,9 @@ export class ExtendedClientBuilder {
     );
 
     return {
+      get serverInfo(): ReturnType<Client["getServerVersion"]> {
+        return extendedClient.serverInfo;
+      },
       async close(): Promise<void> {
         toolsListChangedListeners.clear();
         promptsListChangedListeners.clear();
@@ -205,6 +210,10 @@ export class ExtendedClient {
     private getServiceToolExtensions: () => ServiceToolExtensions,
     private logger: Logger,
   ) {}
+
+  get serverInfo(): ReturnType<Client["getServerVersion"]> {
+    return this.originalClient.getServerVersion?.();
+  }
 
   async close(): Promise<void> {
     return await this.originalClient.close();

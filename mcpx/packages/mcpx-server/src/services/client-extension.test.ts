@@ -6,11 +6,13 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import {
   ExtendedClient,
+  ExtendedClientBuilder,
   extractToolParameters,
   OriginalClientI,
 } from "./client-extension.js";
 import { noOpLogger } from "@aigw/core/logging";
 import { ZodError } from "zod/v4";
+import { ConfigService } from "../config.js";
 
 import {
   ExtensionDescription,
@@ -113,6 +115,28 @@ describe("extractToolParameters", () => {
 });
 
 describe("ExtendedClient", () => {
+  it("preserves existing upstream handshake metadata through the built client", async () => {
+    const client = mockOriginalClient();
+    const serverInfo = {
+      name: "docs",
+      version: "1",
+      description: "Documentation server",
+    };
+    client.getServerVersion = jest.fn(() => serverInfo);
+    const configService = {
+      getConfig: () => ({ toolExtensions: { services: {} } }),
+      subscribe: () => () => {},
+    } as unknown as ConfigService;
+    const extendedClient = await new ExtendedClientBuilder(
+      configService,
+      noOpLogger,
+    ).build({
+      name: "docs",
+      originalClient: client,
+    });
+    expect(extendedClient.serverInfo).toEqual(serverInfo);
+  });
+
   // Defines the config
   const serviceToolExtensions: ServiceToolExtensions = {
     "original-tool": {
