@@ -28,6 +28,14 @@ interface ToolEntry {
 }
 
 interface HarnessOptions {
+  serverInfoByName?: Record<
+    string,
+    NonNullable<ReturnType<Client["getServerVersion"]>>
+  >;
+  catalog?: { id: string; name: string; description?: string }[];
+  catalogIds?: Record<string, string>;
+  pendingAuthServers?: Set<string>;
+  serverNames?: string[];
   entries?: ToolEntry[];
   deniedNames?: Set<string>;
   inactiveServers?: Set<string>;
@@ -180,6 +188,27 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
       visibleResourceForListing: jest.fn(),
     },
     upstreamHandler: {
+      clientsByService: new Map(
+        [
+          ...new Set(
+            options.serverNames ?? entries.map((entry) => entry.serverName),
+          ),
+        ].map((name) => [
+          name,
+          {
+            _state: options.pendingAuthServers?.has(name)
+              ? "pending-auth"
+              : "connected",
+            targetServer: {
+              name,
+              type: "streamable-http",
+              url: "https://example.com/mcp",
+              catalogItemId: options.catalogIds?.[name],
+            },
+            extendedClient: { serverInfo: options.serverInfoByName?.[name] },
+          },
+        ]),
+      ),
       callTool: upstreamCallTool,
       getPrompt: jest.fn(),
     },
@@ -192,6 +221,7 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
     auditLog: { log: auditLog },
     metricRecorder: { recordToolCallDuration: jest.fn() },
     hubService: { recordToolCall: jest.fn() },
+    catalogManager: { getCatalog: () => options.catalog ?? [] },
   } as unknown as Services;
 
   const app = express();
@@ -302,7 +332,7 @@ describe("lazy Streamable HTTP gateway", () => {
     else process.env["INSTANCE_ID"] = previousInstanceId;
   });
 
-  it("keeps the full catalog endpoint and advertises only the three lazy tools", async () => {
+  it("keeps the full catalog endpoint and advertises four lazy tools with startup guidance", async () => {
     const entries = Array.from({ length: 233 }, (_, index) =>
       makeEntry("docs", `tool_${index}`, `docs__tool_${index}`),
     );
@@ -314,7 +344,115 @@ describe("lazy Streamable HTTP gateway", () => {
       expect((await catalog.client.listTools()).tools).toHaveLength(233);
       expect(
         (await lazy.client.listTools()).tools.map((tool) => tool.name),
-      ).toEqual(["mcpx_search_tools", "mcpx_get_tool_schema", "mcpx_call_tool"]);
+      ).toEqual([
+        "mcpx_list_servers",
+        "mcpx_search_tools",
+        "mcpx_get_tool_schema",
+        "mcpx_call_tool",
+      ]);
+      expect(lazy.client.getInstructions()).toContain(
+        "call mcpx_list_servers immediately",
+      );
+      expect(catalog.client.getInstructions()).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("lists only servers with visible tools and rechecks permissions on each call", async () => {
+    const harness = await makeHarness();
+    try {
+      const { client } = await harness.connectClient("/mcp/lazy");
+      const list = async () =>
+        JSON.parse(
+          resultText(
+            await client.callTool({
+              name: "mcpx_list_servers",
+              arguments: {},
+            }),
+          ),
+        );
+      expect(await list()).toEqual({ servers: [{ name: "docs" }] });
+      harness.revokeTool(ALLOWED_NAME);
+      expect(await list()).toEqual({ servers: [] });
+      expect(harness.upstreamCallTool).not.toHaveBeenCalled();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("uses handshake descriptions first, falls back to catalog IDs or names, and omits missing descriptions", async () => {
+    const entries = [
+      makeEntry("docs", "read", "docs__read"),
+      makeEntry("docs", "search", "docs__search"),
+      makeEntry("alias", "read", "alias__read"),
+      makeEntry("fallback", "read", "fallback__read"),
+      makeEntry("custom", "read", "custom__read"),
+      makeEntry("internal", "read", "internal__read", "internal"),
+    ];
+    const harness = await makeHarness({
+      entries,
+      serverNames: ["docs", "alias", "fallback", "custom", "unused"],
+      serverInfoByName: {
+        docs: {
+          name: "upstream-name",
+          version: "1",
+          description: " Upstream documentation ",
+        },
+        fallback: { name: "fallback", version: "1", description: "   " },
+      },
+      catalogIds: { alias: "catalog-alias" },
+      catalog: [
+        { id: "docs", name: "docs", description: "Catalog documentation" },
+        {
+          id: "catalog-alias",
+          name: "original-name",
+          description: "Catalog alias",
+        },
+        { id: "fallback", name: "Fallback", description: " Catalog fallback " },
+      ],
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp/lazy");
+      const result = await client.callTool({
+        name: "mcpx_list_servers",
+        arguments: {},
+      });
+      expect(JSON.parse(resultText(result))).toEqual({
+        servers: [
+          { name: "alias", description: "Catalog alias" },
+          { name: "custom" },
+          { name: "docs", description: "Upstream documentation" },
+          { name: "fallback", description: "Catalog fallback" },
+        ],
+      });
+      expect(harness.upstreamCallTool).not.toHaveBeenCalled();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("includes a server awaiting authentication when its authentication tool is visible", async () => {
+    const harness = await makeHarness({
+      entries: [
+        makeEntry(
+          "oauth",
+          "request_authentication_link",
+          "oauth__request_authentication_link",
+          "internal",
+        ),
+      ],
+      pendingAuthServers: new Set(["oauth"]),
+      catalog: [
+        { id: "oauth", name: "oauth", description: "OAuth integration" },
+      ],
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp/lazy");
+      const result = await client.callTool({ name: "mcpx_list_servers" });
+      expect(JSON.parse(resultText(result))).toEqual({
+        servers: [{ name: "oauth", description: "OAuth integration" }],
+      });
     } finally {
       await harness.close();
     }
