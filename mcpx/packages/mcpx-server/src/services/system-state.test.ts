@@ -4,6 +4,36 @@ import { SystemStateTracker } from "./system-state.js";
 import { noOpLogger } from "@aigw/core/logging";
 
 describe("MetricRecorder", () => {
+  it.each(["sse", "streamable-http"] as const)(
+    "preserves managed OAuth status for %s server exports",
+    (type) => {
+      const recorder = new SystemStateTracker(new ManualClock(), noOpLogger);
+      const server = {
+        name: "docs",
+        _type: type,
+        state: { type: "connected" } as const,
+        url: "https://example.com/mcp",
+        tools: [],
+        originalTools: [],
+        oauth: true,
+      };
+      recorder.recordTargetServerConnection(server);
+      expect(recorder.export().targetServers[0]).toMatchObject({
+        name: "docs",
+        oauth: true,
+      });
+      recorder.updateTargetServerTools({
+        name: "docs",
+        tools: [],
+        originalTools: [],
+      });
+      expect(recorder.export().targetServers[0]).toMatchObject({ oauth: true });
+      recorder.recordTargetServerConnection({ ...server, oauth: false });
+      expect(recorder.export().targetServers[0]).toMatchObject({
+        oauth: false,
+      });
+    },
+  );
   it.each(["stdio", "sse", "streamable-http"] as const)(
     "preserves effective and configured descriptions for %s servers",
     (type) => {
