@@ -1,6 +1,9 @@
 import { ManualClock } from "@aigw/core/time";
 import { DateTime } from "luxon";
-import { SystemStateTracker } from "./system-state.js";
+import {
+  SystemStateTracker,
+  type TargetServerNewWithoutUsage,
+} from "./system-state.js";
 import { noOpLogger } from "@aigw/core/logging";
 
 describe("MetricRecorder", () => {
@@ -8,13 +11,15 @@ describe("MetricRecorder", () => {
     "preserves managed OAuth status for %s server exports",
     (type) => {
       const recorder = new SystemStateTracker(new ManualClock(), noOpLogger);
-      const server = {
+      const server: Exclude<TargetServerNewWithoutUsage, { _type: "stdio" }> = {
         name: "docs",
         _type: type,
         state: { type: "connected" } as const,
         url: "https://example.com/mcp",
         tools: [],
         originalTools: [],
+        prompts: [],
+        originalPrompts: [],
         oauth: true,
       };
       recorder.recordTargetServerConnection(server);
