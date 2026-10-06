@@ -69,6 +69,8 @@ interface InternalStdioTargetServer {
   state: TargetServerState;
   catalogItemId?: string;
   displayName?: string;
+  description?: string;
+  configuredDescription?: string;
   command: string;
   args?: string[];
   env?: Record<string, EnvValue>;
@@ -84,6 +86,8 @@ interface InternalRemoteTargetServer {
   state: TargetServerState;
   catalogItemId?: string;
   displayName?: string;
+  description?: string;
+  configuredDescription?: string;
   url: string;
   headers?: Record<string, EnvValue>;
   icon?: string;
@@ -296,6 +300,19 @@ export class SystemStateTracker {
   recordTargetServerDisconnected(targetServer: { name: string }): void {
     this.state.targetServersByName.delete(targetServer.name); // TODO: Remove when old format is no longer used
     this.state.targetServersByName_new.delete(targetServer.name);
+    this.state.lastUpdatedAt = this.clock.now();
+    this.notifyListeners();
+  }
+
+  updateTargetServerDescription(props: {
+    name: string;
+    description?: string;
+    configuredDescription?: string;
+  }): void {
+    const server = this.state.targetServersByName_new.get(props.name);
+    if (!server) return;
+    server.description = props.description;
+    server.configuredDescription = props.configuredDescription;
     this.state.lastUpdatedAt = this.clock.now();
     this.notifyListeners();
   }
@@ -596,6 +613,8 @@ export class SystemStateTracker {
               name,
               catalogItemId: server.catalogItemId,
               displayName: server.displayName,
+              description: server.description,
+              configuredDescription: server.configuredDescription,
               command: server.command,
               args: server.args,
               env: server.env,
@@ -614,6 +633,8 @@ export class SystemStateTracker {
               name,
               catalogItemId: server.catalogItemId,
               displayName: server.displayName,
+              description: server.description,
+              configuredDescription: server.configuredDescription,
               url: server.url,
               headers: server.headers,
               icon: server.icon,
@@ -769,6 +790,8 @@ export class SystemStateTracker {
       state: targetServer.state,
       catalogItemId: targetServer.catalogItemId,
       displayName: targetServer.displayName,
+      description: targetServer.description,
+      configuredDescription: targetServer.configuredDescription,
       url: targetServer.url,
       headers: targetServer.headers,
       icon: targetServer.icon,
@@ -787,6 +810,8 @@ export class SystemStateTracker {
       state: targetServer.state,
       catalogItemId: targetServer.catalogItemId,
       displayName: targetServer.displayName,
+      description: targetServer.description,
+      configuredDescription: targetServer.configuredDescription,
       command: targetServer.command,
       args: targetServer.args,
       env: targetServer.env,

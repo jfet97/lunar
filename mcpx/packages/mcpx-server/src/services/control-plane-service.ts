@@ -7,6 +7,7 @@ import {
 } from "@mcpx/shared-model";
 import { loggableError, TelemetryLogger } from "@aigw/core/logging";
 import { stringify } from "yaml";
+import { stableStringify } from "@aigw/core/data";
 import { ConfigService, ConfigSnapshot } from "../config.js";
 import {
   AlreadyExistsError,
@@ -15,7 +16,7 @@ import {
   NotFoundError,
   STDIO_SERVERS_DISABLED_MESSAGE,
 } from "../errors.js";
-import { TargetServer } from "../model/target-servers.js";
+import { TargetServer, targetServerSchema } from "../model/target-servers.js";
 import { AuditLogService } from "./audit-log/audit-log-service.js";
 import { ControlPlaneConfigService } from "./control-plane-config-service.js";
 import { redactEnv } from "./redact.js";
@@ -38,6 +39,14 @@ export function sanitizeTargetServerForTelemetry(
     case "streamable-http":
       return server;
   }
+}
+
+function connectionConfig(server: TargetServer): unknown {
+  const { description: _description, ...config } =
+    targetServerSchema.parse(server);
+  return config.type === "stdio"
+    ? config
+    : { ...config, headers: config.headers ?? {} };
 }
 
 export class ControlPlaneService {
@@ -213,6 +222,18 @@ export class ControlPlaneService {
     });
 
     try {
+      if (
+        stableStringify(connectionConfig(existingTargetServer)) ===
+        stableStringify(
+          connectionConfig({ ...existingTargetServer, ...payload }),
+        )
+      ) {
+        this.upstreamHandler.updateClientDescription(
+          payload.name,
+          payload.description ?? existingTargetServer.description,
+        );
+        return this.upstreamHandler.getTargetServer(payload.name);
+      }
       // TODO: replace with safe-swap technique:
       // Add new client with temp name, if successful, remove old client and rename new one
       // as non-failable operation

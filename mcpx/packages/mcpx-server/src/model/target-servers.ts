@@ -26,12 +26,14 @@ export const targetServerStdioSchema = z.object({
   args: z.array(z.string()).optional().default([]),
   env: z.record(z.string(), envValueSchema).optional().default({}),
   icon: z.string().optional(),
+  description: z.string().optional(),
 });
 
 const remoteTargetServerSchema = z.object({
   url: z.string(),
   headers: z.record(z.string(), envValueSchema).optional(),
   icon: z.string().optional(),
+  description: z.string().optional(),
 });
 
 export const targetServerSseSchema = remoteTargetServerSchema.extend({

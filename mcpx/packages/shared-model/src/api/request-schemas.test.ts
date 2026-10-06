@@ -1,8 +1,32 @@
 import {
+  createTargetServerRequestSchema,
+  updateTargetServerRequestSchema,
   envRequirementSchema,
   HEADER_PARAMS_EXTRACTION_REGEX,
   isValidHeaderTemplateString,
 } from "./request-schemas.js";
+
+describe("target server descriptions", () => {
+  it.each([
+    { type: "stdio", command: "node" },
+    { type: "sse", url: "https://example.com/sse" },
+    { type: "streamable-http", url: "https://example.com/mcp" },
+  ])(
+    "preserves descriptions for $type create and update requests",
+    (config) => {
+      expect(
+        createTargetServerRequestSchema.parse({
+          ...config,
+          name: "docs",
+          description: "Search documentation",
+        }),
+      ).toMatchObject({ description: "Search documentation" });
+      expect(
+        updateTargetServerRequestSchema.parse({ ...config, description: "" }),
+      ).toMatchObject({ description: "" });
+    },
+  );
+});
 
 function extractParams(value: string): string[] {
   return [...value.matchAll(HEADER_PARAMS_EXTRACTION_REGEX)].map(

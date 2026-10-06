@@ -36,6 +36,8 @@ describe("system-state mapping", () => {
         icon: "#111827",
         name: "github",
         displayName: "GitHub",
+        description: "Manage GitHub repositories",
+        configuredDescription: "Manage GitHub repositories",
         originalTools: [],
         state: { type: "connected" },
         tools: [
@@ -77,6 +79,8 @@ describe("system-state mapping", () => {
       args: ["-y", "@modelcontextprotocol/server-github"],
       catalogItemId: "github",
       displayName: "GitHub",
+      description: "Manage GitHub repositories",
+      configuredDescription: "Manage GitHub repositories",
       command: "npx",
       env: { GITHUB_TOKEN: { fromSecret: "github-token" } },
       icon: "#111827",

@@ -3,7 +3,27 @@ import {
   isRemoteUrlValid,
   remoteServerSchema,
   mcpJsonSchema,
+  parseServerPayload,
 } from "./mcpJson.js";
+
+describe("server descriptions", () => {
+  it.each([
+    { type: "stdio", command: "node" },
+    { type: "sse", url: "https://example.com/sse" },
+    { type: "streamable-http", url: "https://example.com/mcp" },
+  ] as const)("keeps the description when normalizing $type JSON", (config) => {
+    const record = mcpJsonSchema.parse({
+      docs: { ...config, description: "Search documentation" },
+    });
+    const parsed = record["docs"];
+    if (!parsed) throw new Error("Missing docs server");
+    const payload = { ...parsed, name: "docs" };
+    expect(parseServerPayload(payload)).toMatchObject({
+      success: true,
+      data: { description: "Search documentation" },
+    });
+  });
+});
 
 describe("remoteUrlSchema", () => {
   const valid = (url: string) =>

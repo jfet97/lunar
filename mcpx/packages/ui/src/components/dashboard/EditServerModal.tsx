@@ -1,4 +1,6 @@
 import { Button } from "@/components/ui/button";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -145,12 +147,18 @@ export const EditServerModal = ({
     getInitialJson(initialData, envRequirements),
   );
   const [errorMessage, setErrorMessage] = useState("");
+  const [description, setDescription] = useState(
+    initialData?.configuredDescription ?? "",
+  );
   const [isValid, setIsValid] = useState(true);
   const isDirty = useMemo(
     () =>
+      description !== (initialData?.configuredDescription ?? "") ||
       jsonContent.replaceAll(/\s/g, "").trim() !==
-      getInitialJson(initialData, envRequirements).replaceAll(/\s/g, "").trim(),
-    [initialData, jsonContent, envRequirements],
+        getInitialJson(initialData, envRequirements)
+          .replaceAll(/\s/g, "")
+          .trim(),
+    [initialData, jsonContent, envRequirements, description],
   );
   const colorScheme = useColorScheme();
   const { toast } = useToast();
@@ -210,6 +218,7 @@ export const EditServerModal = ({
         name: initialData.name,
         payload: {
           ...serverPayload,
+          description: description.trim(),
           catalogItemId: initialData.catalogItemId, // add catalogItemId to payload, cause it's not a part of the Json
         },
       },
@@ -243,6 +252,7 @@ export const EditServerModal = ({
   useEffect(() => {
     if (initialData) {
       setJsonContent(getInitialJson({ ...initialData }, envRequirements));
+      setDescription(initialData.configuredDescription ?? "");
     }
   }, [initialData, envRequirements]);
 
@@ -293,6 +303,28 @@ export const EditServerModal = ({
           {canEditCustom && (
             <>
               <div className="min-h-0 flex-1 overflow-auto px-6 py-4 [scrollbar-gutter:stable]">
+                <div className="mb-5 space-y-2">
+                  <Label htmlFor="server-description">Description</Label>
+                  <Textarea
+                    id="server-description"
+                    value={description}
+                    onChange={(event) => setDescription(event.target.value)}
+                    placeholder={
+                      initialData?.description ||
+                      "Describe what this server does"
+                    }
+                    aria-describedby="server-description-help"
+                    disabled={isPending}
+                    rows={3}
+                  />
+                  <p
+                    id="server-description-help"
+                    className="text-sm text-muted-foreground"
+                  >
+                    Optional. Leave empty to use the server&apos;s default
+                    description.
+                  </p>
+                </div>
                 <McpJsonForm
                   colorScheme={colorScheme}
                   errorMessage={errorMessage}
