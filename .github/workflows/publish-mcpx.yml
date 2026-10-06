@@ -51,6 +51,7 @@ jobs:
           src/server/server-logout.test.ts
           src/server/tool-call-cache.test.ts
           src/services/upstream-logout.test.ts
+          src/services/system-state.test.ts
           src/services/oauth-connection-handler.test.ts
           src/oauth-providers/factory.test.ts
           src/services/local-saved-setups.test.ts

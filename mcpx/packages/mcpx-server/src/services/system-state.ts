@@ -83,6 +83,7 @@ interface InternalStdioTargetServer {
 }
 
 interface InternalRemoteTargetServer {
+  oauth?: boolean;
   state: TargetServerState;
   catalogItemId?: string;
   displayName?: string;
@@ -635,6 +636,7 @@ export class SystemStateTracker {
               displayName: server.displayName,
               description: server.description,
               configuredDescription: server.configuredDescription,
+              oauth: server.oauth,
               url: server.url,
               headers: server.headers,
               icon: server.icon,
@@ -792,6 +794,7 @@ export class SystemStateTracker {
       displayName: targetServer.displayName,
       description: targetServer.description,
       configuredDescription: targetServer.configuredDescription,
+      oauth: targetServer.oauth,
       url: targetServer.url,
       headers: targetServer.headers,
       icon: targetServer.icon,

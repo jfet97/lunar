@@ -171,6 +171,9 @@ describe("upstream OAuth logout", () => {
         expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(
           true,
         );
+        expect(harness.state.export().targetServers[0]).toMatchObject({
+          oauth: true,
+        });
         const writes = harness.writeConfig.mock.calls.length;
         await harness.upstream.logoutOAuthForServer("  Docs ");
         expect(harness.extended.close).toHaveBeenCalled();
