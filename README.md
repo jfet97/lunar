@@ -12,6 +12,19 @@
 
 **Lunar.dev** is an open-source platform for **managing, governing and optimizing** third-party API consumption across applications and AI agent workloads at scale.
 
+## Additions in this fork
+
+This fork of [TheLunarCompany/lunar](https://github.com/TheLunarCompany/lunar) adds MCPX features for local use and tool discovery:
+
+- **Complete upstream tool discovery.** MCPX follows all pages of an upstream server's `tools/list` response, so tools beyond the first page are available in the gateway catalog.
+- **On-demand tools through `/mcp/lazy`.** Clients see three tools: `mcpx_search_tools`, `mcpx_get_tool_schema`, and `mcpx_call_tool`. They can find a tool, fetch its schema, and execute it without loading the entire catalog into their context. Discovery and execution use the caller's current permissions and the existing gateway authentication, auditing, and metrics. The full `/mcp` and `/sse` endpoints remain available. See the [discovery guide and client configuration](mcpx/docs/lazy-tools.md).
+- **Local semantic search.** Tool discovery combines keyword ranking with a bundled, quantized multilingual embedding model running locally on CPU. It requires no external inference service, persists tool embeddings in MCPX state, and falls back to keyword search if the embedding runtime is unavailable.
+- **Local saved setups.** Standalone instances can save, list, overwrite, restore, and delete setups through the existing UI, with snapshots stored in `.mcpx/saved-setups`. Enterprise instances and instances authenticated to Hub continue using Hub storage. Saved Setup actions also show the API's error message when an operation fails.
+- **Full local backups.** The Saved Setups page includes **Export Full Backup** for exporting app and server configuration, local saved setups, durable OAuth state, and available deployment and client configuration files. Exports default to `~/.config/mcpx/backups`, use private file permissions, and include a manifest of included and omitted sources. Docker deployments need host mounts for the destination and optional host files. See the [backup guide](mcpx/docs/local-saved-setups-and-export.md) and [Compose overlay](mcpx/examples/compose.local-export.yaml). Full backups are restored manually.
+- **Fork Docker images and regression checks.** Changes to MCPX, the shared core, or the publishing workflow on `main` automatically run fork regression tests and publish a Linux ARM64 image to `ghcr.io/jfet97/mcpx`, tagged with `main` and the full commit SHA. Pull requests also check server and UI types, changed-file lint, regressions, and the UI build.
+
+For local development, see the [MCPX README](mcpx/README.md). Docker builds use the repository root as their context: `docker build --target mcpx -f mcpx/Dockerfile .`.
+
 <div  align="center">
 <img src="readme-files/lunar-flow-light.svg#gh-light-mode-only" >
 <img src="readme-files/lunar-flow-dark.svg#gh-dark-mode-only"  >
