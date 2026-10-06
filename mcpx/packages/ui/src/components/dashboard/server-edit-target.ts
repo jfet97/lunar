@@ -7,6 +7,8 @@ export function getEditTargetServer(server: McpServer): TargetServer {
     name: server.name,
     catalogItemId: server.catalogItemId,
     icon: server.icon,
+    description: server.description,
+    configuredDescription: server.configuredDescription,
     state: { type: "connected" } as const,
     tools: server.tools.map((tool) => ({
       name: tool.name,

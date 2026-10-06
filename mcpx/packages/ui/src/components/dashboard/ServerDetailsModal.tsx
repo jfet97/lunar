@@ -544,6 +544,18 @@ export const ServerDetailsModal = ({
                 </TooltipProvider>
               </div>
 
+              <section
+                className="mb-4 space-y-2"
+                aria-label="Server description"
+              >
+                <h3 className="text-sm font-semibold text-foreground">
+                  Description
+                </h3>
+                <p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">
+                  {currentServer.description || "No description provided."}
+                </p>
+              </section>
+
               <ServerMetricCards
                 calls={currentServer.usage.callCount}
                 lastCall={

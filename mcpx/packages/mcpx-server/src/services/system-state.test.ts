@@ -4,6 +4,43 @@ import { SystemStateTracker } from "./system-state.js";
 import { noOpLogger } from "@aigw/core/logging";
 
 describe("MetricRecorder", () => {
+  it.each(["stdio", "sse", "streamable-http"] as const)(
+    "preserves effective and configured descriptions for %s servers",
+    (type) => {
+      const recorder = new SystemStateTracker(new ManualClock(), noOpLogger);
+      const common = {
+        name: "docs",
+        state: { type: "connected" } as const,
+        description: "Search documentation",
+        configuredDescription: "Search documentation",
+        tools: [],
+        originalTools: [],
+        prompts: [],
+        originalPrompts: [],
+      };
+      recorder.recordTargetServerConnection(
+        type === "stdio"
+          ? { ...common, _type: type, command: "node" }
+          : { ...common, _type: type, url: "https://example.com/mcp" },
+      );
+
+      expect(recorder.export().targetServers[0]).toMatchObject({
+        description: "Search documentation",
+        configuredDescription: "Search documentation",
+      });
+      recorder.updateTargetServerDescription({
+        name: "docs",
+        description: "Default documentation",
+        configuredDescription: "",
+      });
+      expect(recorder.export().targetServers[0]).toMatchObject({
+        description: "Default documentation",
+        configuredDescription: "",
+        state: { type: "connected" },
+      });
+    },
+  );
+
   it("should initialize with default values", () => {
     const clock = new ManualClock();
     const recorder = new SystemStateTracker(clock, noOpLogger);

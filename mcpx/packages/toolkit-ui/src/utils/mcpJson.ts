@@ -56,6 +56,7 @@ export const localServerSchema = z.strictObject({
   args: z.array(z.string()).default([]).optional(),
   env: z.record(z.string().min(1), envValueSchema).default({}).optional(),
   icon: z.string().optional(),
+  description: z.string().optional(),
 });
 
 export const remoteServerSchema = z.strictObject({
@@ -63,6 +64,7 @@ export const remoteServerSchema = z.strictObject({
   url: remoteUrlSchema,
   headers: z.record(z.string(), envValueSchema).optional(),
   icon: z.string().optional(),
+  description: z.string().optional(),
 });
 
 export const mcpServerSchema = z.union([localServerSchema, remoteServerSchema]);
@@ -78,6 +80,7 @@ const localServerPayloadObject = z.object({
   args: z.array(z.string()).optional().default([]),
   env: z.record(z.string(), envValueSchema).optional().default({}),
   icon: z.string().optional(),
+  description: z.string().optional(),
 });
 
 export const localServerPayloadSchema = localServerPayloadObject.transform(
@@ -87,6 +90,7 @@ export const localServerPayloadSchema = localServerPayloadObject.transform(
   }),
 );
 export const remoteServerPayloadSchema = z.object({
+  description: z.string().optional(),
   icon: z.string().optional(),
   name: z.string(),
   type: z.enum(["sse", "streamable-http", "http"]).default("sse").optional(),

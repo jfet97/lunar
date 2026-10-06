@@ -17,13 +17,20 @@ the complete catalog and for administration.
 3. Call `mcpx_get_tool_schema` with one returned name to obtain its full definition.
 4. Call `mcpx_call_tool` with that name and an `arguments` object matching its schema.
 
-Server descriptions come from the upstream initialization response, falling
-back to the existing MCPX catalog entry. Missing descriptions are omitted;
+Server descriptions use the optional `description` field in each `mcpServers`
+entry in `config/mcp.json` first, then the upstream initialization response,
+then the existing MCPX catalog entry. Missing descriptions are omitted;
 MCPX does not infer them from tool descriptions. Descriptions are limited to
 300 characters. Listing servers reads local metadata and makes no upstream
 tool calls. It omits servers with no visible tools, including blocked or
 inactive integrations. A server awaiting authentication can appear when its
 authentication tool is visible. Permissions are checked again on every call.
+
+The server details panel shows the current description. Use **Edit server** >
+**Description** to set a custom value, then **Save Changes**. Leaving the field
+empty restores the upstream or catalog description. Custom descriptions are
+persisted with the server configuration and survive container replacement.
+Saving only the description preserves the upstream connection and OAuth tokens.
 
 Search results omit argument and output schemas. `limit` is capped at 20;
 `offset` and `nextOffset` allow bounded browsing. An exact tool name selects that

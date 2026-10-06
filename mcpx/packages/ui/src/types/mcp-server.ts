@@ -67,4 +67,6 @@ export type McpServer = {
   url?: string;
   headers?: Record<string, EnvValue>;
   displayName?: string;
+  description?: string;
+  configuredDescription?: string;
 };

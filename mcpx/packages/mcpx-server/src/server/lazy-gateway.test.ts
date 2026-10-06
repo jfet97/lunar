@@ -28,6 +28,7 @@ interface ToolEntry {
 }
 
 interface HarnessOptions {
+  descriptionsByName?: Record<string, string>;
   serverInfoByName?: Record<
     string,
     NonNullable<ReturnType<Client["getServerVersion"]>>
@@ -204,6 +205,7 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
               type: "streamable-http",
               url: "https://example.com/mcp",
               catalogItemId: options.catalogIds?.[name],
+              description: options.descriptionsByName?.[name],
             },
             extendedClient: { serverInfo: options.serverInfoByName?.[name] },
           },
@@ -381,18 +383,33 @@ describe("lazy Streamable HTTP gateway", () => {
     }
   });
 
-  it("uses handshake descriptions first, falls back to catalog IDs or names, and omits missing descriptions", async () => {
+  it("uses configured descriptions first, then handshake and catalog descriptions, and omits missing descriptions", async () => {
     const entries = [
       makeEntry("docs", "read", "docs__read"),
       makeEntry("docs", "search", "docs__search"),
       makeEntry("alias", "read", "alias__read"),
       makeEntry("fallback", "read", "fallback__read"),
       makeEntry("custom", "read", "custom__read"),
+      makeEntry("handshake", "read", "handshake__read"),
+      makeEntry("missing", "read", "missing__read"),
       makeEntry("internal", "read", "internal__read", "internal"),
     ];
     const harness = await makeHarness({
       entries,
-      serverNames: ["docs", "alias", "fallback", "custom", "unused"],
+      serverNames: [
+        "docs",
+        "alias",
+        "fallback",
+        "custom",
+        "handshake",
+        "missing",
+        "unused",
+      ],
+      descriptionsByName: {
+        docs: " Configured documentation ",
+        alias: "   ",
+        custom: "Custom integration",
+      },
       serverInfoByName: {
         docs: {
           name: "upstream-name",
@@ -400,6 +417,11 @@ describe("lazy Streamable HTTP gateway", () => {
           description: " Upstream documentation ",
         },
         fallback: { name: "fallback", version: "1", description: "   " },
+        handshake: {
+          name: "handshake",
+          version: "1",
+          description: " Upstream handshake ",
+        },
       },
       catalogIds: { alias: "catalog-alias" },
       catalog: [
@@ -421,9 +443,11 @@ describe("lazy Streamable HTTP gateway", () => {
       expect(JSON.parse(resultText(result))).toEqual({
         servers: [
           { name: "alias", description: "Catalog alias" },
-          { name: "custom" },
-          { name: "docs", description: "Upstream documentation" },
+          { name: "custom", description: "Custom integration" },
+          { name: "docs", description: "Configured documentation" },
           { name: "fallback", description: "Catalog fallback" },
+          { name: "handshake", description: "Upstream handshake" },
+          { name: "missing" },
         ],
       });
       expect(harness.upstreamCallTool).not.toHaveBeenCalled();

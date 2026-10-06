@@ -517,6 +517,27 @@ export class UpstreamHandler
     );
   }
 
+  updateClientDescription(name: string, description?: string): void {
+    const normalizedName = normalizeServerName(name);
+    const client = this._clientsByService.get(normalizedName);
+    if (!client) throw new NotFoundError(`Target server ${name} not found`);
+    const updatedServers = this.targetServers.map((server) =>
+      normalizeServerName(server.name) === normalizedName
+        ? { ...server, description }
+        : server,
+    );
+    this.serverConfigManager.writeTargetServers(updatedServers);
+    this.targetServers = updatedServers;
+    client.targetServer = { ...client.targetServer, description };
+    const state = this.prepareForSystemState(client);
+    this.systemState.updateTargetServerDescription({
+      name: normalizedName,
+      description: state.description,
+      configuredDescription: description,
+    });
+    this.notifyPostChangeHooks();
+  }
+
   async removeClient(name: string): Promise<void> {
     this._watchdog.unwatch(name);
     this.cancelReconnect(name);
@@ -1538,7 +1559,21 @@ export class UpstreamHandler
     promptMessages?: Record<string, PromptMessage[]>,
     displayName?: string,
   ): TargetServerNewWithoutUsage {
-    return prepareForSystemState(
+    const catalogEntry = this.catalogManager
+      .getCatalog()
+      .find((entry) =>
+        targetClient.targetServer.catalogItemId
+          ? entry.id === targetClient.targetServer.catalogItemId
+          : normalizeServerName(entry.name) === targetClient.targetServer.name,
+      );
+    const serverInfo = isConnected(targetClient)
+      ? targetClient.extendedClient.serverInfo
+      : undefined;
+    const description =
+      targetClient.targetServer.description?.trim() ||
+      serverInfo?.description?.trim() ||
+      catalogEntry?.description?.trim();
+    const server = prepareForSystemState(
       targetClient,
       (tool) => this.toolTokenEstimator.estimateTokens(tool),
       approvedTools,
@@ -1548,5 +1583,10 @@ export class UpstreamHandler
       promptMessages,
       displayName,
     );
+    return {
+      ...server,
+      description,
+      configuredDescription: targetClient.targetServer.description,
+    };
   }
 }
