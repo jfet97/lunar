@@ -16,7 +16,7 @@ import type {
   SaveSetupResponse,
 } from "@mcpx/shared-model";
 import { savedSetupItemSchema } from "@mcpx/shared-model";
-import { noOpLogger } from "@mcpx/toolkit-core/logging";
+import { noOpLogger } from "@aigw/core/logging";
 import { resetEnv } from "../env.js";
 import { LocalExportService } from "../services/local-export-service.js";
 import { LocalSavedSetups } from "../services/local-saved-setups.js";

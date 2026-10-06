@@ -106,3 +106,7 @@ mcpx/.dockerignore
 # Build artifacts
 **/dist
 mcpx/build
+
+# local embedding caches and downloaded models
+mcpx/packages/mcpx-server/.mcpx
+mcpx/packages/mcpx-server/models

@@ -3,7 +3,7 @@ import express, { RequestHandler } from "express";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { noOpLogger } from "@mcpx/toolkit-core/logging";
+import { noOpLogger } from "@aigw/core/logging";
 import { McpxSession } from "../model/sessions.js";
 import { BehaviorSetting } from "../services/behavior-service.js";
 import { Services } from "../services/services.js";

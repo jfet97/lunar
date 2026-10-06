@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "mcpx/**"
+      - "ai-gateway-shared/public/**"
       - "eslint.review-rules.js"
       - ".github/workflows/check-mcpx.yml"
   workflow_dispatch:
@@ -28,7 +29,15 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: mcpx/package-lock.json
+          cache-dependency-path: |
+            mcpx/package-lock.json
+            ai-gateway-shared/public/package-lock.json
+      - name: Install shared dependencies
+        working-directory: ai-gateway-shared/public
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build shared core
+        working-directory: ai-gateway-shared/public
+        run: node_modules/.bin/tsc --build packages/core/tsconfig.json
       - name: Install locked dependencies
         working-directory: mcpx
         run: npm ci --ignore-scripts --no-audit --no-fund
