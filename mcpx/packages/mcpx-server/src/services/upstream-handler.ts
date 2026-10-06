@@ -628,7 +628,10 @@ export class UpstreamHandler
     this.notifyPostChangeHooks();
   }
 
-  async removeClient(name: string): Promise<void> {
+  async removeClient(
+    name: string,
+    options: { strict?: boolean } = {},
+  ): Promise<void> {
     this._watchdog.unwatch(name);
     this.cancelReconnect(name);
     this.logger.info("Attempting to remove client", { name });
@@ -636,6 +639,9 @@ export class UpstreamHandler
     const client = this._clientsByService.get(normalizedName);
     if (!client) {
       this.logger.debug("Client already removed", { name });
+      if (options.strict) {
+        throw new NotFoundError(`Target server not found: ${name}`);
+      }
       return;
     }
     try {
@@ -644,23 +650,36 @@ export class UpstreamHandler
       }
       // Delete OAuth tokens for remote servers so they don't persist after removal
       if (client.targetServer.type !== "stdio") {
-        await this.oauthConnectionHandler
-          .deleteOAuthTokensForServer(name)
-          .catch((e) => {
-            this.logger.warn(
-              "Failed to delete OAuth tokens during server removal",
-              { name, error: loggableError(e) },
-            );
-          });
+        if (options.strict) {
+          await this.oauthConnectionHandler.deleteOAuthTokensForServer(
+            client.targetServer.name,
+          );
+        } else {
+          await this.oauthConnectionHandler
+            .deleteOAuthTokensForServer(client.targetServer.name)
+            .catch((e) => {
+              this.logger.warn(
+                "Failed to delete OAuth tokens during server removal",
+                { name, error: loggableError(e) },
+              );
+            });
+        }
       }
       // Remove from targetServers and persist
-      this.targetServers = this.targetServers.filter(
+      const remainingServers = this.targetServers.filter(
         (server) => normalizeServerName(server.name) !== normalizedName,
       );
-      this.serverConfigManager.writeTargetServers(this.targetServers);
+      if (options.strict) {
+        this.serverConfigManager.writeTargetServers(remainingServers);
+        this.targetServers = remainingServers;
+      } else {
+        this.targetServers = remainingServers;
+        this.serverConfigManager.writeTargetServers(this.targetServers);
+      }
       this.recordClientRemoved(name);
       this.logger.info("Client removed", { name });
     } catch (e: unknown) {
+      if (options.strict) throw e;
       const error = loggableError(e);
       this.logger.error("Error removing client", { name, error });
     }

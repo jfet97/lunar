@@ -95,7 +95,20 @@ export function wireInternalCapabilityProvider(
         );
       }
     }
-    registry.registerServer(reg.serverName, reg.capabilities);
+    const existing = registry.servers.get(reg.serverName);
+    registry.registerServer(reg.serverName, {
+      ...existing,
+      ...reg.capabilities,
+      tools: [...(existing?.tools ?? []), ...(reg.capabilities.tools ?? [])],
+      prompts: [
+        ...(existing?.prompts ?? []),
+        ...(reg.capabilities.prompts ?? []),
+      ],
+      resources: [
+        ...(existing?.resources ?? []),
+        ...(reg.capabilities.resources ?? []),
+      ],
+    });
   }
 }
 

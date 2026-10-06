@@ -89,6 +89,28 @@ Discovery respects the caller's permissions, and execution uses the gateway's ex
 
 See the [tool discovery guide](mcpx/docs/lazy-tools.md) for search pagination, local embeddings, and execution behavior.
 
+## Manage MCP servers from an MCP client
+
+MCPX registers nine built-in management tools on `/mcp` by default. On
+`/mcp/lazy`, they appear in `mcpx_list_servers` as the `mcpx` server and can
+be found with `mcpx_search_tools`, inspected with `mcpx_get_tool_schema`, and
+called with `mcpx_call_tool`. Their qualified names use the `mcpx__` prefix,
+such as `mcpx__management_list_servers`.
+
+The tools list servers; add, update, enable, disable, and remove server
+configurations; create backups; and start OAuth login or clear saved OAuth
+authentication. Existing MCPX authentication applies, and each tool uses its
+configured `mcpx` tool permission for discovery and execution. These
+administrative actions can manage any configured upstream server. Enabling or
+disabling preserves its configuration and authentication. OAuth login returns
+a sign-in URL and optional device code for the user to complete in a browser.
+
+Setup backups use the existing local or Hub saved-setup owner. Full backups
+write to MCPX's configured private backup directory and return metadata and
+omissions; they do not return file contents or accept caller-selected paths.
+Hub-managed data and unavailable optional sources are omitted and reported.
+See the [management tools guide](mcpx/docs/management-tools.md) for details.
+
 ## Manage server access and authentication
 
 Use the existing server activation toggle to enable or disable an MCP server.
@@ -167,6 +189,7 @@ Changes to MCPX, the shared core, or the publishing workflow on `main` run regre
 | [Lunar Proxy](proxy/README.md) | Outbound API traffic visibility and policies, including rate limits, retries, queues, and circuit breakers. |
 | [Shared core](ai-gateway-shared/public/README.md) | Shared infrastructure used by the gateway components. |
 | [Tool discovery guide](mcpx/docs/lazy-tools.md) | The four gateway tools, search behavior, and client configuration. |
+| [Management tools guide](mcpx/docs/management-tools.md) | Built-in server administration, permissions, OAuth, and backup behavior. |
 | [Backup and restore guide](mcpx/docs/local-saved-setups-and-export.md) | Saved setup behavior, export coverage, Docker mounts, and manual recovery. |
 
 Lunar MCPX and Lunar Proxy are developed upstream by [The Lunar Company](https://github.com/TheLunarCompany/lunar). Upstream product documentation is available at [docs.lunar.dev](https://docs.lunar.dev/). Fork-specific behavior is documented in this repository.

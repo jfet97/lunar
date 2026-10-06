@@ -55,6 +55,7 @@ import { buildSkillServices, SkillServices } from "./skills/index.js";
 import { BehaviorService } from "./behavior-service.js";
 import { LocalSavedSetups } from "./local-saved-setups.js";
 import { LocalExportService } from "./local-export-service.js";
+import { ManagementToolsService } from "./management-tools.js";
 
 export interface ServicesOptions {
   hubUrl?: string;
@@ -392,6 +393,19 @@ export class Services {
     );
     wireInternalCapabilityProvider(
       this._dynamicCapabilities,
+      this._internalCapabilities,
+      capabilityRegistry,
+    );
+    wireInternalCapabilityProvider(
+      new ManagementToolsService(
+        this,
+        this._permissionManager,
+        () =>
+          env.IS_ENTERPRISE ||
+          this._hubService.status.status === "authenticated",
+        `${env.MCPX_SERVER_URL}/auth/callback`,
+        logger,
+      ),
       this._internalCapabilities,
       capabilityRegistry,
     );
