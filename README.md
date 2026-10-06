@@ -11,7 +11,7 @@ MCPX combines multiple MCP servers behind a single gateway. Clients such as Clau
 
 This fork of [TheLunarCompany/lunar](https://github.com/TheLunarCompany/lunar) focuses on local MCPX use: complete tool discovery, local semantic search, saved configurations, and backups you can export yourself. The repository also contains the original Lunar Proxy for managing outbound API traffic.
 
-[Connect a client](#connect-a-client) · [Discover tools](#discover-tools-without-loading-the-whole-catalog) · [Saved setups and backups](#saved-setups-and-backups) · [Run the fork](#run-the-fork) · [Repository guide](#repository-guide)
+[Connect a client](#connect-a-client) · [Discover tools](#discover-tools-without-loading-the-whole-catalog) · [Server access and authentication](#manage-server-access-and-authentication) · [Saved setups and backups](#saved-setups-and-backups) · [Run the fork](#run-the-fork) · [Repository guide](#repository-guide)
 
 ```mermaid
 flowchart LR
@@ -29,6 +29,7 @@ flowchart LR
 | Complete upstream catalogs | Follows every page of an upstream server's tool list, so tools beyond the first page are available. |
 | On-demand tool discovery | Gives the client four gateway tools for finding services, searching tools, inspecting schemas, and calling a chosen tool. |
 | Local semantic search | Finds tools by meaning as well as keywords, using a bundled multilingual model on CPU. No external inference service is required; keyword search remains available if the model cannot run. |
+| Immediate access control and OAuth logout | Enforces the existing activation toggle for connected clients and lets you clear a server's saved authentication before signing in again. |
 | Local saved setups | Lets a standalone gateway save named configurations and restore them from the UI. |
 | Full backup export | Exports configuration and durable authentication state, with available deployment and client files, for manual recovery. |
 | Published fork images | Builds Linux ARM64 images from the fork, with commit tags and regression checks. |
@@ -87,6 +88,23 @@ For example, a client can first learn that Honeycomb is available, search for a 
 Discovery respects the caller's permissions, and execution uses the gateway's existing authentication and authorization path. Server descriptions come from upstream metadata or the MCPX catalog; missing descriptions are omitted. The full `/mcp` endpoint and legacy `/sse` endpoint remain available.
 
 See the [tool discovery guide](mcpx/docs/lazy-tools.md) for search pagination, local embeddings, and execution behavior.
+
+## Manage server access and authentication
+
+Use the existing server activation toggle to enable or disable an MCP server.
+Disabling immediately blocks new calls for connected clients, including requests
+using cached tool names or results. Calls already executing may finish. Re-enabling
+restores access without reconnecting the client; disabling preserves saved authentication.
+
+OAuth servers also offer **Logout** in the MCP Servers list and server details
+drawer. Logout closes the connection, clears saved OAuth credentials, and returns
+the server to **Authentication required**. Choose **Authenticate** to sign in again.
+Pending login flows and old callbacks are cancelled, and cached results from the
+previous login are not reused. The server configuration is preserved.
+
+Logout clears authentication stored by MCPX; the provider's browser session is
+managed separately. See the [server authentication guide](mcpx/docs/server-authentication.md)
+for details and the logout API.
 
 ## Saved setups and backups
 

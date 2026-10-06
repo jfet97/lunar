@@ -42,6 +42,20 @@ export const useInitiateServerAuth = () =>
     mutationFn: initiateServerAuth,
   });
 
+export async function logoutServerAuth({
+  serverName,
+}: {
+  serverName: string;
+}): Promise<void> {
+  await axiosClient.post(`/auth/logout/${encodeURIComponent(serverName)}`);
+}
+
+export const useLogoutServerAuth = () =>
+  useMutation({
+    mutationKey: ["logout-server-auth"],
+    mutationFn: logoutServerAuth,
+  });
+
 export const useOAuthCallback = () =>
   useMutation({
     mutationKey: ["oauth-callback"],

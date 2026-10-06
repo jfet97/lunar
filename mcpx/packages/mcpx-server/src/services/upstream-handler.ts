@@ -140,6 +140,9 @@ export class UpstreamHandler
   private shuttingDown = false;
   private previousToolExtensions: ToolExtensions["services"] = {};
   private unsubscribeConfig?: () => void;
+  private readonly authTargetVersions = new WeakMap<TargetServer, number>();
+  private readonly authVersions = new Map<string, number>();
+  private readonly logoutOperations = new Map<string, Promise<void>>();
 
   constructor(
     private systemState: SystemStateTracker,
@@ -495,7 +498,93 @@ export class UpstreamHandler
     action: (extended: ExtendedClientI) => Promise<T>,
   ): Promise<T> {
     const client = this.requireConnectedClient(serviceName);
-    return this.executeWithAuthRetry(client, method, action);
+    return this.executeWithAuthRetry(client, method, (extended) => {
+      this.assertAuthTargetCurrent(client.targetServer);
+      if (
+        this.configService.getConfig().targetServerAttributes[
+          normalizeServerName(serviceName)
+        ]?.inactive
+      ) {
+        throw new NotAllowedError(`Server ${serviceName} is inactive`);
+      }
+      return action(extended);
+    });
+  }
+
+  private assertAuthTargetCurrent(targetServer: TargetServer): void {
+    if (this.isAuthTargetRevoked(targetServer)) {
+      throw new NotAllowedError(
+        `Server ${targetServer.name} was logged out. Sign in again.`,
+      );
+    }
+  }
+
+  private isAuthTargetRevoked(targetServer: TargetServer): boolean {
+    const current =
+      this.authVersions.get(normalizeServerName(targetServer.name)) ?? 0;
+    const version = this.authTargetVersions.get(targetServer);
+    if (version === undefined) {
+      this.authTargetVersions.set(targetServer, current);
+      return false;
+    }
+    return version !== current;
+  }
+
+  getAuthVersion(serverName: string): number {
+    return this.authVersions.get(normalizeServerName(serverName)) ?? 0;
+  }
+
+  logoutOAuthForServer(serverName: string): Promise<void> {
+    const name = normalizeServerName(serverName);
+    const existing = this.logoutOperations.get(name);
+    if (existing) return existing;
+    const client = this._clientsByService.get(name);
+    if (!client)
+      return Promise.reject(
+        new NotFoundError(`Server not found: ${serverName}`),
+      );
+    if (
+      client.targetServer.type === "stdio" ||
+      (!this.isOAuthServer(name) && client._state !== "pending-auth")
+    ) {
+      return Promise.reject(
+        new NotAllowedError(
+          `Server ${serverName} does not have OAuth authentication`,
+        ),
+      );
+    }
+
+    this.authVersions.set(name, (this.authVersions.get(name) ?? 0) + 1);
+    const targetServer = { ...client.targetServer };
+    this.targetServers = this.targetServers.map((server) =>
+      normalizeServerName(server.name) === name ? targetServer : server,
+    );
+    this._watchdog.unwatch(name);
+    this.cancelReconnect(name);
+    this.authRecoveryByService.delete(name);
+    // invalidate providers synchronously before awaiting transport shutdown
+    const deletion = this.oauthConnectionHandler.deleteOAuthTokensForServer(
+      client.targetServer.name,
+    );
+    const transition = this.transitionToPendingAuth(targetServer);
+    const close = isConnected(client)
+      ? client.extendedClient.close()
+      : Promise.resolve();
+    const operation = Promise.allSettled([deletion, transition, close]).then(
+      (results) => {
+        const failure = results.find((result) => result.status === "rejected");
+        if (failure?.status === "rejected") throw failure.reason;
+        this.logger.info("Logged out target server", { name });
+      },
+    );
+    this.logoutOperations.set(name, operation);
+    void operation
+      .finally(() => {
+        if (this.logoutOperations.get(name) === operation)
+          this.logoutOperations.delete(name);
+      })
+      .catch(() => undefined);
+    return operation;
   }
 
   // Throws TokenExpiredError for OAuth pending-auth (agent signal to re-auth),
@@ -529,6 +618,7 @@ export class UpstreamHandler
     this.serverConfigManager.writeTargetServers(updatedServers);
     this.targetServers = updatedServers;
     client.targetServer = { ...client.targetServer, description };
+    this.assertAuthTargetCurrent(client.targetServer);
     const state = this.prepareForSystemState(client);
     this.systemState.updateTargetServerDescription({
       name: normalizedName,
@@ -654,6 +744,7 @@ export class UpstreamHandler
   // Will throw an error if the target server is not in pendingAuth state or
   // if reusing tokens fails (missing/rejected tokens)
   async reuseOAuthByName(targetServerName: string): Promise<ExtendedClientI> {
+    await this.logoutOperations.get(normalizeServerName(targetServerName));
     const pendingAuth = await this.getPendingAuthClient(targetServerName);
     return await this.reuseOAuth(pendingAuth);
   }
@@ -668,6 +759,7 @@ export class UpstreamHandler
     callbackUrl?: string,
   ): Promise<InitiateOAuthResult> {
     const normalizedName = normalizeServerName(targetServerName);
+    await this.logoutOperations.get(normalizedName);
     const client = this._clientsByService.get(normalizedName);
     if (!client) {
       throw new NotFoundError(`Server not found: ${targetServerName}`);
@@ -698,9 +790,12 @@ export class UpstreamHandler
     });
   }
 
-  /** Returns true if the server has an active OAuth provider this session. */
+  /** Returns true if the server has managed OAuth authentication. */
   isOAuthServer(serverName: string): boolean {
-    return this.oauthConnectionHandler.isOAuthServer(serverName);
+    const configuredName =
+      this._clientsByService.get(normalizeServerName(serverName))?.targetServer
+        .name ?? serverName;
+    return this.oauthConnectionHandler.isOAuthServer(configuredName);
   }
 
   /**
@@ -797,6 +892,11 @@ export class UpstreamHandler
   private async recordClientUpsert(
     newTargetClient: TargetClient,
   ): Promise<void> {
+    if (this.isAuthTargetRevoked(newTargetClient.targetServer)) {
+      if (isConnected(newTargetClient))
+        await newTargetClient.extendedClient.close();
+      return;
+    }
     const normalizedName = normalizeServerName(
       newTargetClient.targetServer.name,
     );
@@ -895,8 +995,15 @@ export class UpstreamHandler
     targetServer: TargetServer,
     extendedClient: ExtendedClientI,
   ): Promise<TargetClient> {
+    if (this.isAuthTargetRevoked(targetServer)) {
+      return extendedClient.close().then(() => {
+        this.assertAuthTargetCurrent(targetServer);
+        throw new Error("Unreachable revoked OAuth connection");
+      });
+    }
     return fetchServerCapabilities(extendedClient, this.logger)
       .then((capabilities): TargetClient => {
+        this.assertAuthTargetCurrent(targetServer);
         this.capabilityRegistry.registerServer(
           normalizeServerName(targetServer.name),
           capabilities,
@@ -904,6 +1011,10 @@ export class UpstreamHandler
         return { _state: "connected", targetServer, extendedClient };
       })
       .catch((e): TargetClient => {
+        if (this.isAuthTargetRevoked(targetServer)) {
+          void extendedClient.close().catch(() => undefined);
+          throw e;
+        }
         this.logger.warn("Failed to load capabilities on connect", {
           name: targetServer.name,
           error: loggableError(e),
@@ -1048,6 +1159,11 @@ export class UpstreamHandler
   private enqueueReconnect(name: string): void {
     // A reconnect already in flight during shutdown must not reschedule itself.
     if (this.shuttingDown) return;
+    if (
+      this._clientsByService.get(normalizeServerName(name))?._state ===
+      "pending-auth"
+    )
+      return;
     this._watchdog.unwatch(name);
     this.cancelReconnect(name);
     const normalizedName = normalizeServerName(name);
@@ -1107,6 +1223,7 @@ export class UpstreamHandler
     await this.recordClientUpsert({ _state: "connecting", targetServer });
 
     const newClient = await this.safeInitiateClient(targetServer);
+    if (this.isAuthTargetRevoked(targetServer)) return false;
     await this.recordClientUpsert(newClient);
 
     this.logger.debug("Upstream server reconnect attempt finished", {
@@ -1383,8 +1500,10 @@ export class UpstreamHandler
         error: loggableError(closeError),
       });
     });
+    this.assertAuthTargetCurrent(targetServer);
     const reauthedClient =
       await this.oauthConnectionHandler.safeTryWithExistingTokens(targetServer);
+    this.assertAuthTargetCurrent(targetServer);
     if (reauthedClient) {
       const finalClient = await this.finalizeConnection(
         targetServer,
@@ -1404,6 +1523,7 @@ export class UpstreamHandler
 
     const tokenExpired =
       await this.oauthConnectionHandler.isTokenExpiredForServer(targetServer);
+    this.assertAuthTargetCurrent(targetServer);
     if (tokenExpired) {
       // Tokens were rejected (deleted on 401) or never existed → prompt re-auth.
       this.logger.warn(
@@ -1587,6 +1707,13 @@ export class UpstreamHandler
       ...server,
       description,
       configuredDescription: targetClient.targetServer.description,
+      ...(targetClient.targetServer.type !== "stdio"
+        ? {
+            oauth:
+              targetClient._state === "pending-auth" ||
+              this.isOAuthServer(targetClient.targetServer.name),
+          }
+        : {}),
     };
   }
 }

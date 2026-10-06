@@ -181,6 +181,7 @@ export class OAuthConnectionHandler {
   private flows: Map<string, Promise<InitiateOAuthResult>> = new Map();
   // Kept across reconnects so every transport of a server shares one coalescer.
   private refreshCoalescers: Map<string, RefreshCoalescer> = new Map();
+  private readonly flowVersions = new Map<string, number>();
 
   constructor(
     private oauthSessionManager: OAuthSessionManagerI,
@@ -262,6 +263,9 @@ export class OAuthConnectionHandler {
   async safeTryWithExistingTokens(
     targetServer: RemoteTargetServer,
   ): Promise<ExtendedClientI | undefined> {
+    const version = this.flowVersions.get(targetServer.name) ?? 0;
+    const isCurrent = (): boolean =>
+      version === (this.flowVersions.get(targetServer.name) ?? 0);
     const targetServerTypeStr =
       targetServer.type === "sse" ? "SSE" : "StreamableHTTP";
 
@@ -281,7 +285,7 @@ export class OAuthConnectionHandler {
         );
         return undefined;
       }
-      if (!hasPersisted) {
+      if (!hasPersisted || !isCurrent()) {
         return undefined;
       }
       authProvider = this.oauthSessionManager.getOrCreateOAuthProvider({
@@ -302,7 +306,7 @@ export class OAuthConnectionHandler {
       });
       return undefined;
     }
-    if (!existingTokens) {
+    if (!existingTokens || !isCurrent()) {
       return undefined;
     }
     this.logger.info("Found existing tokens, attempting to use them", {
@@ -322,6 +326,10 @@ export class OAuthConnectionHandler {
         name: targetServer.name,
         originalClient: client,
       });
+      if (!isCurrent()) {
+        await extendedClient.close();
+        return undefined;
+      }
 
       this.logger.info(
         `${targetServerTypeStr} Client connected with existing OAuth tokens`,
@@ -332,6 +340,7 @@ export class OAuthConnectionHandler {
       );
       return extendedClient;
     } catch (error) {
+      if (!isCurrent()) return undefined;
       if (isAuthenticationError(error) || isInvalidGrantError(error)) {
         // Tokens permanently rejected (401 or invalid_grant on refresh).
         // Delete them so resolveExistingAuth routes to pending-auth (re-auth)
@@ -374,12 +383,16 @@ export class OAuthConnectionHandler {
       onComplete?: (client: ExtendedClientI) => void | Promise<void>;
     },
   ): Promise<InitiateOAuthResult> {
+    const version = this.flowVersions.get(targetServer.name) ?? 0;
     // Reuse a live flow instead of opening another tab. If it expired
     // (getOAuthFlow returns undefined) or the in-flight attempt failed, discard
     // and start fresh so a dead URL can never block a new login.
     const existing = this.flows.get(targetServer.name);
     if (existing) {
       const result = await existing.catch(() => null);
+      if (version !== (this.flowVersions.get(targetServer.name) ?? 0)) {
+        throw new Error("OAuth flow was cancelled. Sign in again.");
+      }
       if (result && this.oauthSessionManager.getOAuthFlow(result.state)) {
         this.logger.debug("Reusing existing OAuth flow", {
           name: targetServer.name,
@@ -414,6 +427,12 @@ export class OAuthConnectionHandler {
     },
   ): Promise<InitiateOAuthResult> {
     const { callbackUrl, onComplete, resetStaleTokens } = options ?? {};
+    const version = this.flowVersions.get(targetServer.name) ?? 0;
+    const assertCurrent = (): void => {
+      if (version !== (this.flowVersions.get(targetServer.name) ?? 0)) {
+        throw new Error("OAuth flow was cancelled. Sign in again.");
+      }
+    };
 
     if (resetStaleTokens) {
       // Re-auth of a pending-auth server: clear stored tokens and the DCR client
@@ -422,12 +441,17 @@ export class OAuthConnectionHandler {
       // pending-auth via a local expiry check with no server round-trip, so no 401
       // fires, and a server-side-stale registration would otherwise be reused and
       // rejected (invalid_client), looping forever. Removing this reintroduces that.
-      await this.deleteOAuthTokensForServer(targetServer.name);
+      this.cleanupPendingFlow(targetServer.name);
+      this.refreshCoalescers.delete(targetServer.name);
+      await this.oauthSessionManager.deleteOAuthTokensForServer(
+        targetServer.name,
+      );
     } else {
       // Close any prior flow's transport before replacing the entry.
       this.cleanupPendingFlow(targetServer.name);
     }
 
+    assertCurrent();
     const authProvider = this.oauthSessionManager.getOrCreateOAuthProvider({
       serverName: targetServer.name,
       serverUrl: targetServer.url,
@@ -453,7 +477,9 @@ export class OAuthConnectionHandler {
       targetServer.url,
       authProvider,
     );
+    assertCurrent();
     await this.settleClientIdentity(authProvider, authMeta);
+    assertCurrent();
 
     // Create transport with auth provider - this will trigger OAuth flow
     const transport = this.buildTransport(targetServer, authProvider);
@@ -499,6 +525,12 @@ export class OAuthConnectionHandler {
       );
     }
 
+    try {
+      assertCurrent();
+    } catch (error) {
+      await transport.close();
+      throw error;
+    }
     this.logClientIdentity(authProvider, authorizationUrl, authMeta);
 
     // Store for later completion
@@ -570,6 +602,9 @@ export class OAuthConnectionHandler {
       } else {
         // Standard OAuth authorization code flow - exchange code for tokens
         await transport.finishAuth(authorizationCode);
+        if (this.pendingFlows.get(serverName) !== pending) {
+          throw new Error("OAuth flow was cancelled. Sign in again.");
+        }
 
         const postAuthTransport = this.buildTransport(targetServer, provider);
 
@@ -580,6 +615,10 @@ export class OAuthConnectionHandler {
         name: serverName,
         originalClient: client,
       });
+      if (this.pendingFlows.get(serverName) !== pending) {
+        await extendedClient.close();
+        throw new Error("OAuth flow was cancelled. Sign in again.");
+      }
 
       this.logger.info("OAuth flow completed successfully", {
         name: serverName,
@@ -587,9 +626,13 @@ export class OAuthConnectionHandler {
       });
 
       return extendedClient;
+    } catch (error) {
+      await client.close().catch(() => undefined);
+      throw error;
     } finally {
       // Live connection runs on the post-auth transport, close the pre-auth one.
-      this.cleanupPendingFlow(serverName);
+      if (this.pendingFlows.get(serverName) === pending)
+        this.cleanupPendingFlow(serverName);
     }
   }
 
@@ -628,6 +671,10 @@ export class OAuthConnectionHandler {
    * Cancel a pending OAuth flow (cleanup)
    */
   cancelPendingOAuth(serverName: string): boolean {
+    this.flowVersions.set(
+      serverName,
+      (this.flowVersions.get(serverName) ?? 0) + 1,
+    );
     // flows is set before pendingFlows (which is only populated after URL polling),
     // so check both. Otherwise a cancel/delete while the URL is still polling would
     // leave the in-flight flow reusable.

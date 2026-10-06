@@ -21,6 +21,7 @@ import {
   type CustomCapabilityToolSubmitPayload,
 } from "@/components/capabilities/CustomCapabilityToolDialog";
 import { ServerStatusBadge } from "@/components/dashboard/ServerStatusBadge";
+import { ServerLogoutButton } from "./ServerLogoutButton";
 import { getMcpServerStatusFromTargetServer } from "@/components/dashboard/helpers";
 import { useDomainIcon } from "@/hooks/useDomainIcon";
 import { useServerInactive } from "@/hooks/useServerInactive";
@@ -567,49 +568,61 @@ function McpServerRow({
       className="rounded-lg border border-mcpx-border-subtle bg-mcpx-surface transition-shadow hover:shadow-[var(--mcpx-shadow-weak)]"
       data-server-name={server.name}
     >
-      <button
-        type="button"
-        className="flex w-full cursor-pointer items-center justify-between gap-5 px-4 py-3 text-left"
-        onClick={onClick}
-      >
-        <div className="flex min-w-0 items-center gap-4">
-          {domainIconUrl ? (
-            <img
-              src={domainIconUrl}
-              alt={`${server.name} favicon`}
-              className="size-6 shrink-0 object-contain"
-              style={
-                isInactive ? { filter: "grayscale(100%) brightness(0.8)" } : {}
-              }
-            />
-          ) : (
-            <div className="size-6 shrink-0 rounded bg-mcpx-page0" />
-          )}
-          <span
-            className={`truncate text-base font-semibold capitalize ${
-              isInactive ? "text-mcpx-text-disabled" : "text-mcpx-text"
-            }`}
-          >
-            {server.name}
-          </span>
-        </div>
+      <div className="flex items-center gap-4 pr-4">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-5 px-4 py-3 text-left"
+          onClick={onClick}
+          aria-expanded={isExpanded}
+        >
+          <div className="flex min-w-0 items-center gap-4">
+            {domainIconUrl ? (
+              <img
+                src={domainIconUrl}
+                alt={`${server.name} favicon`}
+                className="size-6 shrink-0 object-contain"
+                style={
+                  isInactive
+                    ? { filter: "grayscale(100%) brightness(0.8)" }
+                    : {}
+                }
+              />
+            ) : (
+              <div className="size-6 shrink-0 rounded bg-mcpx-page0" />
+            )}
+            <span
+              className={`truncate text-base font-semibold capitalize ${
+                isInactive ? "text-mcpx-text-disabled" : "text-mcpx-text"
+              }`}
+            >
+              {server.name}
+            </span>
+          </div>
 
-        <div className="flex shrink-0 items-center gap-4">
-          <ServerStatusBadge status={status} />
-          <Metric icon={HammerIcon} label="Tools" value={server.tools.length} />
-          <Metric
-            icon={PromptIcon}
-            label="Prompts"
-            value={server.prompts?.length ?? 0}
-          />
-          <ChevronRight
-            className={`size-4 text-mcpx-text-disabled ${isExpanded ? "rotate-90" : ""}`}
-            style={{
-              transition: `transform ${durationMs}ms ease-out`,
-            }}
-          />
-        </div>
-      </button>
+          <div className="flex shrink-0 items-center gap-4">
+            <ServerStatusBadge status={status} />
+            <Metric
+              icon={HammerIcon}
+              label="Tools"
+              value={server.tools.length}
+            />
+            <Metric
+              icon={PromptIcon}
+              label="Prompts"
+              value={server.prompts?.length ?? 0}
+            />
+            <ChevronRight
+              className={`size-4 text-mcpx-text-disabled ${isExpanded ? "rotate-90" : ""}`}
+              style={{
+                transition: `transform ${durationMs}ms ease-out`,
+              }}
+            />
+          </div>
+        </button>
+        {server._type !== "stdio" && server.oauth && (
+          <ServerLogoutButton serverName={server.name} />
+        )}
+      </div>
 
       <div
         className="grid ease-out"

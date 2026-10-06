@@ -55,6 +55,7 @@ export interface StdioTargetServer {
 }
 
 interface RemoteTargetServer {
+  oauth?: boolean;
   state: TargetServerState;
   name: string;
   catalogItemId?: string;

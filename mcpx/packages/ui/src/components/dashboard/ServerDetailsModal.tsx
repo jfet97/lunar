@@ -35,6 +35,7 @@ import {
 import { useEffect, useState, useMemo } from "react";
 import { useDomainIcon } from "@/hooks/useDomainIcon";
 import { Switch } from "@/components/ui/switch";
+import { ServerLogoutButton } from "@/components/mcp-servers/ServerLogoutButton";
 import {
   Tooltip,
   TooltipContent,
@@ -518,6 +519,9 @@ export const ServerDetailsModal = ({
                       : "Custom Server"}
                   </p>
                 </div>
+                {currentServer.oauth && (
+                  <ServerLogoutButton serverName={currentServer.name} />
+                )}
                 <TooltipProvider>
                   <Tooltip>
                     <TooltipTrigger asChild>

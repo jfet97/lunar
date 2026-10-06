@@ -49,6 +49,7 @@ export type EnvValue =
   | null;
 
 export type McpServer = {
+  oauth?: boolean;
   args: string[];
   command?: string;
   configuration?: Record<string, unknown>;
