@@ -7,6 +7,13 @@ import { noOpLogger } from "@aigw/core/logging";
 import { McpxSession } from "../model/sessions.js";
 import { BehaviorSetting } from "../services/behavior-service.js";
 import { Services } from "../services/services.js";
+import { ManagementToolsService } from "../services/management-tools.js";
+import {
+  InternalCapabilitiesService,
+  wireInternalCapabilityProvider,
+} from "../services/internal-capabilities-service.js";
+import { CapabilityRegistry } from "../services/capability-registry.js";
+import { PermissionCheck } from "../services/capability-resolver.js";
 
 let buildDownstreamTransportsRouter: (typeof import("./downstream-transports.js"))["buildDownstreamTransportsRouter"];
 
@@ -46,6 +53,18 @@ interface HarnessOptions {
   toolResult?: unknown;
   onCallTool?: (...args: unknown[]) => Promise<unknown>;
   authVersions?: Map<string, number>;
+  management?: {
+    services: Pick<
+      Services,
+      | "controlPlane"
+      | "upstreamHandler"
+      | "setupManager"
+      | "localSavedSetups"
+      | "localExportService"
+      | "hubService"
+    >;
+    permissions: PermissionCheck;
+  };
 }
 
 interface Harness {
@@ -104,11 +123,13 @@ function makeMetadata(): McpxSession["metadata"] {
 }
 
 async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
-  const entries = options.entries ?? [
-    makeEntry("docs", "get_page", ALLOWED_NAME),
-    makeEntry("secrets", "read", DENIED_NAME),
-    makeEntry("legacy", "fetch", INACTIVE_NAME),
-    makeEntry("oauth", "grant", HIDDEN_NAME, "internal"),
+  const entries = [
+    ...(options.entries ?? [
+      makeEntry("docs", "get_page", ALLOWED_NAME),
+      makeEntry("secrets", "read", DENIED_NAME),
+      makeEntry("legacy", "fetch", INACTIVE_NAME),
+      makeEntry("oauth", "grant", HIDDEN_NAME, "internal"),
+    ]),
   ];
   const deniedNames = options.deniedNames ?? new Set([DENIED_NAME]);
   const inactiveServers = options.inactiveServers ?? new Set(["legacy"]);
@@ -154,6 +175,31 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
       return metadata ? { metadata } : undefined;
     },
   };
+  const internalCapabilities = options.management
+    ? new InternalCapabilitiesService(noOpLogger)
+    : undefined;
+  if (options.management && internalCapabilities) {
+    const registry = new CapabilityRegistry(noOpLogger);
+    const provider = new ManagementToolsService(
+      options.management.services,
+      options.management.permissions,
+      () => false,
+      "http://localhost:9523/auth/callback",
+      noOpLogger,
+    );
+    wireInternalCapabilityProvider(provider, internalCapabilities, registry);
+    for (const tool of registry.servers.get("mcpx")?.tools ?? []) {
+      entries.push({
+        serverName: "mcpx",
+        capabilityName: tool.definition.name,
+        definition: {
+          ...tool.definition,
+          name: `mcpx__${tool.definition.name}`,
+        },
+        origin: "internal",
+      });
+    }
+  }
   const services = {
     sessions: sessionsService,
     behaviorService: {
@@ -182,7 +228,7 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
         return { ok: true as const, entry };
       },
     },
-    internalCapabilities: {
+    internalCapabilities: internalCapabilities ?? {
       visibleToolForListing: (entry: ToolEntry) =>
         hiddenNames.has(entry.definition.name) ? undefined : entry.definition,
       dispatchTool: jest.fn(async () => ({ content: [] })),
@@ -358,6 +404,276 @@ describe("lazy Streamable HTTP gateway", () => {
         "call mcpx_list_servers immediately",
       );
       expect(catalog.client.getInstructions()).toBeUndefined();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it.each(["/mcp", "/mcp/lazy"] as const)(
+    "serves built-in management tools over %s through the real internal provider",
+    async (endpoint) => {
+      const addTargetServer = jest.fn().mockResolvedValue(undefined);
+      const managementServices = {
+        controlPlane: {
+          addTargetServer,
+          updateTargetServer: jest.fn(),
+          removeTargetServer: jest.fn(),
+          getSystemState: () => ({ targetServers: [] }),
+          getAppConfig: () => ({ yaml: "" }),
+          config: {
+            getTargetServerAttributes: () => ({}),
+            activateTargetServer: jest.fn(),
+            deactivateTargetServer: jest.fn(),
+          },
+        },
+        upstreamHandler: {
+          servers: [],
+          getTargetServer: jest.fn(),
+          initiateOAuthForServer: jest.fn(),
+          logoutOAuthForServer: jest.fn(),
+        },
+        setupManager: { captureCurrentSetup: jest.fn() },
+        localSavedSetups: { save: jest.fn() },
+        localExportService: { create: jest.fn() },
+        hubService: { savedSetups: { saveSetup: jest.fn() } },
+      } as unknown as NonNullable<HarnessOptions["management"]>["services"];
+      const permissions = {
+        hasPermission: jest.fn(
+          ({ capabilityName }) => capabilityName !== "management_logout_server",
+        ),
+      };
+      const harness = await makeHarness({
+        management: { services: managementServices, permissions },
+      });
+      try {
+        const { client } = await harness.connectClient(endpoint);
+        if (endpoint === "/mcp") {
+          const names = (await client.listTools()).tools.map(
+            (tool) => tool.name,
+          );
+          expect(names).toContain("mcpx__management_add_server");
+          expect(names).not.toContain("mcpx__management_logout_server");
+        } else {
+          expect(
+            (await client.listTools()).tools.map((tool) => tool.name),
+          ).toEqual([
+            "mcpx_list_servers",
+            "mcpx_search_tools",
+            "mcpx_get_tool_schema",
+            "mcpx_call_tool",
+          ]);
+          const servers = JSON.parse(
+            resultText(
+              await client.callTool({
+                name: "mcpx_list_servers",
+                arguments: {},
+              }),
+            ),
+          );
+          expect(
+            servers.servers.map((server: { name: string }) => server.name),
+          ).toContain("mcpx");
+          const search = JSON.parse(
+            resultText(
+              await client.callTool({
+                name: "mcpx_search_tools",
+                arguments: { query: "mcpx__management_add_server" },
+              }),
+            ),
+          );
+          expect(
+            search.tools.map((tool: { name: string }) => tool.name),
+          ).toContain("mcpx__management_add_server");
+          expect(
+            search.tools.map((tool: { name: string }) => tool.name),
+          ).not.toContain("mcpx__management_logout_server");
+          const schema = JSON.parse(
+            resultText(
+              await client.callTool({
+                name: "mcpx_get_tool_schema",
+                arguments: { name: "mcpx__management_add_server" },
+              }),
+            ),
+          );
+          expect(schema.inputSchema.required).toEqual(["name", "config"]);
+        }
+
+        const call =
+          endpoint === "/mcp"
+            ? await client.callTool({
+                name: "mcpx__management_add_server",
+                arguments: {
+                  name: " Notes ",
+                  config: { type: "sse", url: "https://notes.example/mcp" },
+                },
+              })
+            : await client.callTool({
+                name: "mcpx_call_tool",
+                arguments: {
+                  name: "mcpx__management_add_server",
+                  arguments: {
+                    name: " Notes ",
+                    config: { type: "sse", url: "https://notes.example/mcp" },
+                  },
+                },
+              });
+        expect(call.isError).toBeFalsy();
+        expect(addTargetServer).toHaveBeenCalledWith({
+          name: "notes",
+          type: "sse",
+          url: "https://notes.example/mcp",
+        });
+
+        const hiddenName = "mcpx__management_logout_server";
+        const hiddenCall =
+          endpoint === "/mcp"
+            ? client.callTool({
+                name: hiddenName,
+                arguments: { name: "notes" },
+              })
+            : client.callTool({
+                name: "mcpx_call_tool",
+                arguments: { name: hiddenName, arguments: { name: "notes" } },
+              });
+        if (endpoint === "/mcp") {
+          await expect(hiddenCall).rejects.toThrow(/not available/i);
+        } else {
+          const response = await hiddenCall;
+          expect(response.isError).toBe(true);
+          expect(resultText(response)).toMatch(/unavailable/i);
+        }
+        expect(
+          managementServices.upstreamHandler.logoutOAuthForServer,
+        ).not.toHaveBeenCalled();
+      } finally {
+        await harness.close();
+      }
+    },
+  );
+
+  it("rechecks management permissions on lazy execution after discovery", async () => {
+    let logoutAllowed = true;
+    const logoutOAuthForServer = jest.fn();
+    const managementServices = {
+      controlPlane: {
+        addTargetServer: jest.fn(),
+        updateTargetServer: jest.fn(),
+        removeTargetServer: jest.fn(),
+        getSystemState: () => ({ targetServers: [] }),
+        getAppConfig: () => ({ yaml: "" }),
+        config: {
+          getTargetServerAttributes: () => ({}),
+          activateTargetServer: jest.fn(),
+          deactivateTargetServer: jest.fn(),
+        },
+      },
+      upstreamHandler: {
+        servers: [],
+        getTargetServer: jest.fn(),
+        initiateOAuthForServer: jest.fn(),
+        logoutOAuthForServer,
+      },
+      setupManager: { captureCurrentSetup: jest.fn() },
+      localSavedSetups: { save: jest.fn() },
+      localExportService: { create: jest.fn() },
+      hubService: { savedSetups: { saveSetup: jest.fn() } },
+    } as unknown as NonNullable<HarnessOptions["management"]>["services"];
+    const permissions = {
+      hasPermission: jest.fn(
+        ({ capabilityName }) =>
+          capabilityName !== "management_logout_server" || logoutAllowed,
+      ),
+    };
+    const harness = await makeHarness({
+      management: { services: managementServices, permissions },
+      cacheEnabled: true,
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp/lazy");
+      const toolName = "mcpx__management_logout_server";
+      const search = JSON.parse(
+        resultText(
+          await client.callTool({
+            name: "mcpx_search_tools",
+            arguments: { query: toolName },
+          }),
+        ),
+      );
+      expect(search.tools.map((tool: { name: string }) => tool.name)).toContain(
+        toolName,
+      );
+      logoutAllowed = false;
+      const deniedCall = await client.callTool({
+        name: "mcpx_call_tool",
+        arguments: { name: toolName, arguments: { name: "docs" } },
+      });
+      expect(deniedCall.isError).toBe(true);
+      expect(resultText(deniedCall)).toMatch(/unavailable/i);
+      expect(logoutOAuthForServer).not.toHaveBeenCalled();
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it("does not replay cached management responses after state changes", async () => {
+    let inactive = false;
+    const server = {
+      name: "docs",
+      type: "sse",
+      url: "https://docs.example/mcp",
+    };
+    const managementServices = {
+      controlPlane: {
+        addTargetServer: jest.fn(),
+        updateTargetServer: jest.fn(),
+        removeTargetServer: jest.fn(),
+        getSystemState: () => ({
+          targetServers: [
+            {
+              ...server,
+              _type: "sse",
+              state: { type: "connected" },
+              oauth: false,
+            },
+          ],
+        }),
+        getAppConfig: () => ({ yaml: "" }),
+        config: {
+          getTargetServerAttributes: () => ({ docs: { inactive } }),
+          activateTargetServer: jest.fn(),
+          deactivateTargetServer: jest.fn(),
+        },
+      },
+      upstreamHandler: {
+        servers: [server],
+        getTargetServer: jest.fn(() => server),
+        initiateOAuthForServer: jest.fn(),
+        logoutOAuthForServer: jest.fn(),
+      },
+      setupManager: { captureCurrentSetup: jest.fn() },
+      localSavedSetups: { save: jest.fn() },
+      localExportService: { create: jest.fn() },
+      hubService: { savedSetups: { saveSetup: jest.fn() } },
+    } as unknown as NonNullable<HarnessOptions["management"]>["services"];
+    const harness = await makeHarness({
+      management: {
+        services: managementServices,
+        permissions: { hasPermission: () => true },
+      },
+      cacheEnabled: true,
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp");
+      const request = {
+        name: "mcpx__management_list_servers",
+        arguments: {},
+        _meta: { progressToken: "management-list" },
+      };
+      const first = JSON.parse(resultText(await client.callTool(request)));
+      expect(first.servers[0].enabled).toBe(true);
+      inactive = true;
+      const second = JSON.parse(resultText(await client.callTool(request)));
+      expect(second.servers[0].enabled).toBe(false);
     } finally {
       await harness.close();
     }

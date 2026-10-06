@@ -318,6 +318,15 @@ export async function getServer(
             resolved.reason,
           );
         }
+        if (
+          resolved.entry.origin === "internal" &&
+          !services.internalCapabilities.visibleToolForListing(resolved.entry, {
+            consumerTag,
+            clientName,
+          })
+        ) {
+          throw makeUnavailableError("Tool", request.params.name, "unknown");
+        }
         const authVersion = services.upstreamHandler.getAuthVersion(
           resolved.entry.serverName,
         );
@@ -662,6 +671,15 @@ function listVisibleLazyServers(
 ): LazyServer[] {
   const catalog = services.catalogManager.getCatalog();
   return [...serverNames].sort().flatMap((name) => {
+    if (name === "mcpx") {
+      return [
+        {
+          name,
+          description:
+            "MCPX built-in capabilities for managing MCP servers, backups, and authentication.",
+        },
+      ];
+    }
     const client = services.upstreamHandler.clientsByService.get(name);
     if (!client) return [];
     const catalogEntry = catalog.find((entry) =>
@@ -710,6 +728,7 @@ function isToolCallCacheable(options: {
 }): boolean {
   const { services, session, request } = options;
   return (
+    !request.params.name.startsWith("mcpx__management_") &&
     services.behaviorService.get(BehaviorSetting.ENABLE_TOOL_CALL_CACHE) &&
     session !== undefined &&
     hasExplicitCorrelationKey(request)

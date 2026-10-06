@@ -191,6 +191,7 @@ export class ControlPlaneService {
   // TODO: make sure failed update does not leave the system in an inconsistent state
   async updateTargetServer(
     payload: TargetServer,
+    options: { replaceConfiguration?: boolean } = {},
   ): Promise<TargetServer | undefined> {
     if (
       payload.type === "stdio" &&
@@ -216,6 +217,10 @@ export class ControlPlaneService {
       throw new NotFoundError();
     }
 
+    const updatedTargetServer = options.replaceConfiguration
+      ? { ...payload, catalogItemId: existingTargetServer.catalogItemId }
+      : { ...existingTargetServer, ...payload };
+
     this.logger.info(`Updating target server ${payload.name}`, {
       existingTargetServer: cleanExisting,
       payload: cleanPayload,
@@ -224,9 +229,7 @@ export class ControlPlaneService {
     try {
       if (
         stableStringify(connectionConfig(existingTargetServer)) ===
-        stableStringify(
-          connectionConfig({ ...existingTargetServer, ...payload }),
-        )
+        stableStringify(connectionConfig(updatedTargetServer))
       ) {
         this.upstreamHandler.updateClientDescription(
           payload.name,
@@ -238,10 +241,7 @@ export class ControlPlaneService {
       // Add new client with temp name, if successful, remove old client and rename new one
       // as non-failable operation
       await this.upstreamHandler.removeClient(payload.name);
-      await this.upstreamHandler.addClient({
-        ...existingTargetServer,
-        ...payload,
-      }); // use the existingTargetServer catalogItemId if it's in the existing target server
+      await this.upstreamHandler.addClient(updatedTargetServer);
       this.logger.info(`Target server ${payload.name} updated successfully`);
       this.logger.telemetry.info("target server updated", {
         mcpServers: {
@@ -258,21 +258,27 @@ export class ControlPlaneService {
     }
   }
 
-  async removeTargetServer(name: string): Promise<void> {
+  async removeTargetServer(
+    name: string,
+    options: { strict?: boolean } = {},
+  ): Promise<void> {
     this.logger.info("Received RemoveTargetServer event from Control Plane", {
       name,
     });
-    await this.upstreamHandler.removeClient(name);
+    await this.upstreamHandler.removeClient(name, options);
     this.auditLog.log({
       eventType: "target_server_removed",
       payload: { name },
     });
-    await this.config.removeTargetServerAttribute(name).catch((e) => {
+    try {
+      await this.config.removeTargetServerAttribute(name);
+    } catch (e: unknown) {
+      if (options.strict) throw e;
       this.logger.warn(
         `Failed to remove target server ${name} from config's attributes during removal`,
         { error: loggableError(e) },
       );
-    });
+    }
     this.logger.info(`Target server ${name} removed successfully`);
     this.logger.telemetry.info("target server removed", {
       mcpServers: { [name]: null },
