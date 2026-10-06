@@ -1,55 +1,156 @@
 <div align="center">
-<img src="readme-files/logo-light.png#gh-light-mode-only" width="50%" height="50%" />
-<img src="readme-files/logo-dark.png#gh-dark-mode-only" width="50%" height="50%" />
-
-<a href="https://opensource.org/licenses/MIT">![License](https://img.shields.io/badge/License-MIT-blue.svg)</a>
-<a href="https://docs.lunar.dev/">![Documentation](https://img.shields.io/badge/docs-viewdocs-blue.svg?style=flat-square "Viewdocs")</a>
-<a href="https://lunar.dev/">![Website](https://img.shields.io/badge/lunar.dev-website-purple.svg?style=flat-square "Website")</a>
-
+  <img src="readme-files/logo-light.png#gh-light-mode-only" width="42%" alt="Lunar.dev" />
+  <img src="readme-files/logo-dark.png#gh-dark-mode-only" width="42%" alt="Lunar.dev" />
 </div>
 
-# Welcome to Lunar.dev
+# Lunar MCPX · jfet97's fork
 
-**Lunar.dev** is an open-source platform for **managing, governing and optimizing** third-party API consumption across applications and AI agent workloads at scale.
+**One connection to your MCP services, with tools discovered as you need them.**
 
-## Additions in this fork
+MCPX combines multiple MCP servers behind a single gateway. Clients such as Claude Code and Codex can use services such as Honeycomb, Sentry, and Atlassian through that connection. You choose which servers to configure; MCPX manages their connections, authentication, and tool access.
 
-This fork of [TheLunarCompany/lunar](https://github.com/TheLunarCompany/lunar) adds MCPX features for local use and tool discovery:
+This fork of [TheLunarCompany/lunar](https://github.com/TheLunarCompany/lunar) focuses on local MCPX use: complete tool discovery, local semantic search, saved configurations, and backups you can export yourself. The repository also contains the original Lunar Proxy for managing outbound API traffic.
 
-- **Complete upstream tool discovery.** MCPX follows all pages of an upstream server's `tools/list` response, so tools beyond the first page are available in the gateway catalog.
-- **On-demand tools through `/mcp/lazy`.** Clients see four tools: `mcpx_list_servers`, `mcpx_search_tools`, `mcpx_get_tool_schema`, and `mcpx_call_tool`. Startup instructions recommend listing the available MCP servers and their existing descriptions first. Clients can then find a tool, fetch its schema, and execute it without loading the entire catalog into their context. Discovery and execution use the caller's current permissions and the existing gateway authentication, auditing, and metrics. The full `/mcp` and `/sse` endpoints remain available. See the [discovery guide and client configuration](mcpx/docs/lazy-tools.md).
-- **Local semantic search.** Tool discovery combines keyword ranking with a bundled, quantized multilingual embedding model running locally on CPU. It requires no external inference service, persists tool embeddings in MCPX state, and falls back to keyword search if the embedding runtime is unavailable.
-- **Saved setups and user-managed backups.** Standalone instances can save and restore configuration snapshots through the Saved Setups UI, with snapshots stored in `.mcpx/saved-setups`; enterprise instances and instances authenticated to Hub continue using Hub storage. From the same page, users can choose **Export Full Backup** to export configuration, saved setups, durable OAuth state, and available deployment and client configuration files. Exports default to `~/.config/mcpx/backups`, use private file permissions, and include a manifest of included and omitted sources. Full backups are restored manually. See the [backup guide](mcpx/docs/local-saved-setups-and-export.md) and [Docker Compose overlay](mcpx/examples/compose.local-export.yaml) for coverage, host mounts, and restore instructions.
-- **Fork Docker images and regression checks.** Changes to MCPX, the shared core, or the publishing workflow on `main` automatically run fork regression tests and publish a Linux ARM64 image to `ghcr.io/jfet97/mcpx`, tagged with `main` and the full commit SHA. Pull requests also check server and UI types, changed-file lint, regressions, and the UI build.
+[Connect a client](#connect-a-client) · [Discover tools](#discover-tools-without-loading-the-whole-catalog) · [Saved setups and backups](#saved-setups-and-backups) · [Run the fork](#run-the-fork) · [Repository guide](#repository-guide)
 
-For local development, see the [MCPX README](mcpx/README.md). Docker builds use the repository root as their context: `docker build --target mcpx -f mcpx/Dockerfile .`.
+```mermaid
+flowchart LR
+    C[Your MCP clients] --> G[MCPX gateway]
+    G --> H[Honeycomb MCP]
+    G --> S[Sentry MCP]
+    G --> A[Atlassian MCP]
+    G --> O[Other configured MCP servers]
+```
 
-<div  align="center">
-<img src="readme-files/lunar-flow-light.svg#gh-light-mode-only" >
-<img src="readme-files/lunar-flow-dark.svg#gh-dark-mode-only"  >
-</div>
+## What this fork adds
 
-## Consumption Management for the AI Era
+| Addition | What it does for you |
+| --- | --- |
+| Complete upstream catalogs | Follows every page of an upstream server's tool list, so tools beyond the first page are available. |
+| On-demand tool discovery | Gives the client four gateway tools for finding services, searching tools, inspecting schemas, and calling a chosen tool. |
+| Local semantic search | Finds tools by meaning as well as keywords, using a bundled multilingual model on CPU. No external inference service is required; keyword search remains available if the model cannot run. |
+| Local saved setups | Lets a standalone gateway save named configurations and restore them from the UI. |
+| Full backup export | Exports configuration and durable authentication state, with available deployment and client files, for manual recovery. |
+| Published fork images | Builds Linux ARM64 images from the fork, with commit tags and regression checks. |
 
-As AI agents and autonomous workflows increasingly rely on external APIs, there's a growing need for a mediation layer that acts as a central aggregation point between applications, agents, and the services they depend on.
+## Connect a client
 
-Lunar.dev provides that layer—serving as a unified API Gateway for AI, delivering:
+Once MCPX is running, point your client at one of these endpoints:
 
-- **Live API Traffic Visibility:** Get real-time metrics on latency, errors, cost, and token usage across all outbound traffic, including LLM and agent calls.
-- **AI-Aware Policy Enforcement:** Control tool access, throttle agent actions, and govern agentic traffic with fine-grained rules.
-- **Advanced Traffic Shaping:** Apply rate limits, retries, priority queues, and circuit breakers to manage load and ensure reliability.
-- **Cost & Performance Optimization:** Identify waste, smooth traffic peaks, and reduce overuse of costly APIs through smart gateway policies.
-- **Centralized MCP Aggregation:** Streamline operations by consolidating multiple MCP servers into a single gateway, enhancing security, observability, and management.
+| Endpoint | How the client sees tools |
+| --- | --- |
+| `http://localhost:9000/mcp/lazy` | Four gateway tools. The client discovers individual upstream tools when needed. |
+| `http://localhost:9000/mcp` | The complete catalog of upstream tools visible to that client. |
 
-## Choose Your Path
+The examples below use the on-demand endpoint. Replace `localhost:9000` with your gateway address when running it elsewhere.
 
-Lunar.dev is composed of two major components:
+### Claude Code
 
-- [**Lunar Proxy**](https://github.com/TheLunarCompany/lunar/tree/main/proxy#readme) – our core API gateway and control layer
-- [**Lunar MCPX**](https://github.com/TheLunarCompany/lunar/tree/main/mcpx#readme) – a zero-code aggregator for multiple MCP servers with unified API access
+Add this entry to your MCP configuration:
 
-Explore the one that fits your needs—or use both for a full-stack solution.
+```json
+{
+  "mcpServers": {
+    "mcpx": {
+      "type": "http",
+      "url": "http://localhost:9000/mcp/lazy"
+    }
+  }
+}
+```
 
-## Open Source at the Core
+### Codex
 
-This project was born out of the need for a more robust, production-ready approach to managing third-party APIs. It remains open-source at its core and free for non-production/personal use. For production environments, we offer advanced features through guided onboarding and platform tiers; [visit our website](https://lunar.dev) or reach out directly for more information
+Add this entry to your configuration:
+
+```toml
+[mcp_servers.mcpx]
+url = "http://localhost:9000/mcp/lazy"
+startup_timeout_sec = 60
+```
+
+Reconnect after changing the endpoint or upgrading the gateway. An existing session may retain its previous tool catalog and need a session restart.
+
+## Discover tools without loading the whole catalog
+
+The `/mcp/lazy` endpoint advertises four tools. Its startup instructions ask the client to discover the available servers immediately, then find the tools relevant to the task.
+
+| Step | Tool | Result |
+| --- | --- | --- |
+| 1. Learn what is connected | `mcpx_list_servers` | Visible server names and their existing descriptions, when available. |
+| 2. Find a tool for the task | `mcpx_search_tools` | A short list of matching tools, ranked by semantic and keyword search. |
+| 3. Inspect its arguments | `mcpx_get_tool_schema` | The selected tool's full schema. |
+| 4. Use it | `mcpx_call_tool` | The upstream tool's result. |
+
+For example, a client can first learn that Honeycomb is available, search for a tracing task, inspect the matching tool, and call it. It only retrieves schemas for the tools it chooses.
+
+Discovery respects the caller's permissions, and execution uses the gateway's existing authentication and authorization path. Server descriptions come from upstream metadata or the MCPX catalog; missing descriptions are omitted. The full `/mcp` endpoint and legacy `/sse` endpoint remain available.
+
+See the [tool discovery guide](mcpx/docs/lazy-tools.md) for search pagination, local embeddings, and execution behavior.
+
+## Saved setups and backups
+
+Both actions live on the **Saved Setups** page, but solve different problems:
+
+| Question | Saved setup | Full backup |
+| --- | --- | --- |
+| Use it when… | You want to keep a configuration and switch back to it later. | You want a copy for recovery after losing gateway data or moving an installation. |
+| Example | Save your working setup before experimenting with servers or access rules, then restore it from the UI. | Export the gateway's files before moving to another machine, then restore them manually. |
+| Server and gateway configuration | Included. | Included. |
+| Previously saved setups | Each saved setup stores its own configuration. | Includes locally stored saved setups. |
+| OAuth login state | Not included. | Includes durable tokens and registered OAuth client information. |
+| Deployment and client configuration | Not included. | Included when the files are available to the gateway. |
+| How you restore it | Choose **Restore** in the UI. | Stop MCPX and copy the exported files back into the appropriate locations. |
+
+### Save a setup to switch configurations
+
+A saved setup records the configured MCP servers and gateway settings. Restoring it applies those settings to the running gateway. OAuth authentication state is separate, so a saved setup cannot recover lost login tokens.
+
+Standalone instances store setups in `.mcpx/saved-setups`, inside MCPX's persistent state. Enterprise instances and instances authenticated to Hub keep using Hub storage. A locally saved setup lives with the gateway's data; losing that data also loses the setup.
+
+### Export a full backup for recovery
+
+Choose **Export Full Backup** to write a separate directory containing configuration, locally saved setups, durable OAuth state, and any available deployment and client configuration files. The export includes a manifest showing what was included or omitted. Hub-managed data must be recovered through Hub.
+
+The default destination is `~/.config/mcpx/backups`. With Docker, mount a host directory and configure the export destination so the files are accessible outside the container. Exports use private file permissions because they can contain credentials.
+
+Backups are created when you choose to export them. A full backup is restored manually; the Saved Setups **Restore** action only applies a saved configuration.
+
+See the [backup and restore guide](mcpx/docs/local-saved-setups-and-export.md) for exact coverage and restore steps, and the [Compose overlay](mcpx/examples/compose.local-export.yaml) for host mounts.
+
+## Run the fork
+
+The fork publishes its MCPX image to [GitHub Container Registry](https://github.com/jfet97/lunar/pkgs/container/mcpx):
+
+```text
+ghcr.io/jfet97/mcpx:main
+ghcr.io/jfet97/mcpx:<full-commit-sha>
+```
+
+Published images target **Linux ARM64**, including Docker on Apple Silicon. The moving `main` tag follows successful builds; commit tags identify a source revision. Pin the published digest when you want to keep an installation on a specific image.
+
+For setup instructions and the control-plane UI, start with the [MCPX guide](mcpx/README.md). Preserve the gateway's configuration and `.mcpx` state in persistent volumes so settings, OAuth state, and local saved setups survive container replacement.
+
+To build the fork yourself, run this from the repository root:
+
+```sh
+docker build --target mcpx -f mcpx/Dockerfile .
+```
+
+The build includes the shared core under `ai-gateway-shared/public`; the repository root is the required build context.
+
+Changes to MCPX, the shared core, or the publishing workflow on `main` run regression checks and publish an image. Pull requests touching MCPX also check types, changed-file lint, regressions, and the UI build. A push that only changes this root README does not trigger an image build. Publishing an image does not upgrade an existing installation.
+
+## Repository guide
+
+| Location | Purpose |
+| --- | --- |
+| [MCPX](mcpx/README.md) | MCP server aggregation, connection management, and the control-plane UI. This fork's additions live here. |
+| [Lunar Proxy](proxy/README.md) | Outbound API traffic visibility and policies, including rate limits, retries, queues, and circuit breakers. |
+| [Shared core](ai-gateway-shared/public/README.md) | Shared infrastructure used by the gateway components. |
+| [Tool discovery guide](mcpx/docs/lazy-tools.md) | The four gateway tools, search behavior, and client configuration. |
+| [Backup and restore guide](mcpx/docs/local-saved-setups-and-export.md) | Saved setup behavior, export coverage, Docker mounts, and manual recovery. |
+
+Lunar MCPX and Lunar Proxy are developed upstream by [The Lunar Company](https://github.com/TheLunarCompany/lunar). Upstream product documentation is available at [docs.lunar.dev](https://docs.lunar.dev/). Fork-specific behavior is documented in this repository.
+
+This repository is distributed under the [MIT license](LICENSE). See each component's license file for its notices.
