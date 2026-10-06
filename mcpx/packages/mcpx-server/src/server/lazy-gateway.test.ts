@@ -45,6 +45,7 @@ interface HarnessOptions {
   persistedSessions?: Map<string, McpxSession["metadata"]>;
   toolResult?: unknown;
   onCallTool?: (...args: unknown[]) => Promise<unknown>;
+  authVersions?: Map<string, number>;
 }
 
 interface Harness {
@@ -189,6 +190,7 @@ async function makeHarness(options: HarnessOptions = {}): Promise<Harness> {
       visibleResourceForListing: jest.fn(),
     },
     upstreamHandler: {
+      getAuthVersion: (name: string) => options.authVersions?.get(name) ?? 0,
       clientsByService: new Map(
         [
           ...new Set(
@@ -632,6 +634,149 @@ describe("lazy Streamable HTTP gateway", () => {
       await harness.close();
     }
   });
+
+  it.each(["/mcp", "/mcp/lazy"] as const)(
+    "rejects cached and new calls after disabling a server on %s without reconnecting",
+    async (endpoint) => {
+      const inactiveServers = new Set<string>();
+      const harness = await makeHarness({
+        cacheEnabled: true,
+        inactiveServers,
+      });
+      try {
+        const { client } = await harness.connectClient(endpoint);
+        const params = {
+          name: endpoint === "/mcp" ? ALLOWED_NAME : "mcpx_call_tool",
+          arguments:
+            endpoint === "/mcp"
+              ? { id: "42" }
+              : { name: ALLOWED_NAME, arguments: { id: "42" } },
+          _meta: { progressToken: "disable-replay" },
+        };
+        await client.callTool(params);
+        inactiveServers.add("docs");
+
+        const expectUnavailable = async (request: typeof params) => {
+          if (endpoint === "/mcp") {
+            await expect(client.callTool(request)).rejects.toThrow(
+              "server inactive",
+            );
+          } else {
+            expect((await client.callTool(request)).isError).toBe(true);
+          }
+        };
+        await expectUnavailable(params);
+        await expectUnavailable({
+          ...params,
+          _meta: { progressToken: "disable-new" },
+        });
+        expect(harness.upstreamCallTool).toHaveBeenCalledTimes(1);
+
+        if (endpoint === "/mcp") {
+          expect(
+            (await client.listTools()).tools.map((tool) => tool.name),
+          ).not.toContain(ALLOWED_NAME);
+        } else {
+          expect(
+            JSON.parse(
+              resultText(
+                await client.callTool({
+                  name: "mcpx_list_servers",
+                  arguments: {},
+                }),
+              ),
+            ),
+          ).not.toEqual(
+            expect.objectContaining({
+              servers: expect.arrayContaining([{ name: "docs" }]),
+            }),
+          );
+          expect(
+            (
+              await client.callTool({
+                name: "mcpx_get_tool_schema",
+                arguments: { name: ALLOWED_NAME },
+              })
+            ).isError,
+          ).toBe(true);
+        }
+
+        inactiveServers.delete("docs");
+        await client.callTool({
+          ...params,
+          _meta: { progressToken: "reenabled" },
+        });
+        expect(harness.upstreamCallTool).toHaveBeenCalledTimes(2);
+      } finally {
+        await harness.close();
+      }
+    },
+  );
+
+  it("rejects a cached pending duplicate after disable without waiting for the original call", async () => {
+    let releaseCall!: (value: unknown) => void;
+    let callStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      callStarted = resolve;
+    });
+    const pendingResult = new Promise<unknown>((resolve) => {
+      releaseCall = resolve;
+    });
+    const inactiveServers = new Set<string>();
+    const harness = await makeHarness({
+      cacheEnabled: true,
+      inactiveServers,
+      onCallTool: async () => {
+        callStarted();
+        return pendingResult;
+      },
+    });
+    try {
+      const { client } = await harness.connectClient("/mcp");
+      const params = {
+        name: ALLOWED_NAME,
+        arguments: {},
+        _meta: { progressToken: "disable-pending" },
+      };
+      const first = client.callTool(params);
+      await started;
+      inactiveServers.add("docs");
+      await expect(
+        client.callTool(params, undefined, { timeout: 1000 }),
+      ).rejects.toThrow("server inactive");
+      expect(harness.upstreamCallTool).toHaveBeenCalledTimes(1);
+      releaseCall({ content: [] });
+      await first;
+    } finally {
+      releaseCall({ content: [] });
+      await harness.close();
+    }
+  });
+
+  it.each(["/mcp", "/mcp/lazy"] as const)(
+    "does not replay a previous account's cached result after fresh login on %s",
+    async (endpoint) => {
+      const authVersions = new Map<string, number>();
+      const harness = await makeHarness({ cacheEnabled: true, authVersions });
+      try {
+        const { client } = await harness.connectClient(endpoint);
+        const params = {
+          name: endpoint === "/mcp" ? ALLOWED_NAME : "mcpx_call_tool",
+          arguments:
+            endpoint === "/mcp" ? {} : { name: ALLOWED_NAME, arguments: {} },
+          _meta: { progressToken: "account-change" },
+        };
+        await client.callTool(params);
+        authVersions.set("docs", 1);
+        await client.callTool(params);
+        expect(harness.upstreamCallTool).toHaveBeenCalledTimes(2);
+        await client.callTool(params);
+        expect(harness.upstreamCallTool).toHaveBeenCalledTimes(2);
+      } finally {
+        await harness.close();
+      }
+    },
+  );
 
   it("rejects catalog sessions when addressed through the lazy endpoint", async () => {
     const harness = await makeHarness();

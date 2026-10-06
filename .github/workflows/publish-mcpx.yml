@@ -48,6 +48,11 @@ jobs:
           src/services/hub-downstream-session-client.test.ts
           src/server/lazy-tools.test.ts
           src/server/lazy-gateway.test.ts
+          src/server/server-logout.test.ts
+          src/server/tool-call-cache.test.ts
+          src/services/upstream-logout.test.ts
+          src/services/oauth-connection-handler.test.ts
+          src/oauth-providers/factory.test.ts
           src/services/local-saved-setups.test.ts
           src/services/local-export-service.test.ts
           src/server/control-plane.test.ts

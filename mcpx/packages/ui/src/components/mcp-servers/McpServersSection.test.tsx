@@ -4,6 +4,8 @@ import type { TargetServer } from "@mcpx/shared-model";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { routes } from "@/routes";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { axiosClient } from "@/data/axios-client";
 import { McpServersSection } from "./McpServersSection";
 
 type StdioTargetServer = Extract<TargetServer, { _type: "stdio" }>;
@@ -32,7 +34,8 @@ vi.mock("@/hooks/useServerInactive", () => ({
   useServerInactive: () => false,
 }));
 
-vi.mock("@/data/server-auth", () => ({
+vi.mock("@/data/server-auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/data/server-auth")>()),
   useInitiateServerAuth: () => ({ mutate: mocks.initiateServerAuth }),
 }));
 
@@ -47,6 +50,7 @@ const connectedServer = createServer();
 describe("McpServersSection", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   it("links the zero state to the add-server page", () => {
@@ -133,12 +137,54 @@ describe("McpServersSection", () => {
       }),
     );
   });
+
+  it("exposes logout for OAuth servers without expanding the server row", async () => {
+    const post = vi.spyOn(axiosClient, "post").mockResolvedValue({ data: {} });
+    const remoteServer: TargetServer = {
+      ...connectedServer,
+      _type: "streamable-http",
+      url: "https://example.com/mcp",
+      oauth: true,
+    };
+    renderSection([remoteServer]);
+    await userEvent.click(
+      screen.getByRole("button", { name: "Log out of github" }),
+    );
+    expect(post).toHaveBeenCalledWith("/auth/logout/github");
+    expect(screen.getByRole("button", { name: /^github/i })).toHaveAttribute(
+      "aria-expanded",
+      "false",
+    );
+  });
+
+  it("keeps logout available to clear a pending OAuth flow", () => {
+    const remoteServer: TargetServer = {
+      ...connectedServer,
+      _type: "streamable-http",
+      url: "https://example.com/mcp",
+      oauth: true,
+      state: { type: "pending-auth" },
+    };
+    renderSection([remoteServer]);
+    expect(
+      screen.getByRole("button", { name: "Log out of github" }),
+    ).toBeEnabled();
+  });
+
+  it("does not offer logout for servers without managed OAuth", () => {
+    renderSection([connectedServer]);
+    expect(
+      screen.queryByRole("button", { name: /Log out of/ }),
+    ).not.toBeInTheDocument();
+  });
 });
 
 function renderSection(servers: TargetServer[]) {
   return render(
     <MemoryRouter>
-      <McpServersSection servers={servers} />
+      <QueryClientProvider client={new QueryClient()}>
+        <McpServersSection servers={servers} />
+      </QueryClientProvider>
     </MemoryRouter>,
   );
 }

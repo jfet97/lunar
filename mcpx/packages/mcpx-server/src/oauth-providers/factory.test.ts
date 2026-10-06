@@ -46,6 +46,93 @@ function makeMemoryStore(): OAuthTokenStoreI {
 
 describe("OAuthProviderFactory", () => {
   describe(".deleteTokensForServer", () => {
+    it("rejects writes from all old providers, including replaced factories, and permits fresh login", async () => {
+      const tokenStore = makeMemoryStore();
+      const firstFactory = new OAuthProviderFactory(noOpLogger, {
+        tokenStore,
+        envVars: emptyEnvVarResolver,
+      });
+      const replacementFactory = new OAuthProviderFactory(noOpLogger, {
+        tokenStore,
+        envVars: emptyEnvVarResolver,
+      });
+      const options = {
+        serverName: "target",
+        serverUrl: "https://example.com/mcp",
+      };
+      const first = firstFactory.createProvider(options);
+      const replaced = replacementFactory.createProvider(options);
+      const tokens = {
+        access_token: "old",
+        refresh_token: "refresh",
+        token_type: "bearer",
+      };
+      await first.saveTokens(tokens);
+      await replacementFactory.deleteTokensForServer("target");
+
+      await expect(first.saveTokens(tokens)).rejects.toThrow(
+        "authentication was cleared",
+      );
+      await expect(replaced.saveTokens(tokens)).rejects.toThrow(
+        "authentication was cleared",
+      );
+      expect(await tokenStore.loadTokens("target")).toBeUndefined();
+      const fresh = replacementFactory.createProvider(options);
+      await fresh.saveTokens({ ...tokens, access_token: "new" });
+      expect(await tokenStore.loadTokens("target")).toMatchObject({
+        access_token: "new",
+      });
+    });
+
+    it("waits for already started credential writes before deleting", async () => {
+      const tokenStore = makeMemoryStore();
+      const originalSave = tokenStore.saveTokens;
+      let start!: () => void;
+      let release!: () => void;
+      const started = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      tokenStore.saveTokens = async (name, data) => {
+        start();
+        await gate;
+        await originalSave(name, data);
+      };
+      const factory = new OAuthProviderFactory(noOpLogger, {
+        tokenStore,
+        envVars: emptyEnvVarResolver,
+      });
+      const provider = factory.createProvider({
+        serverName: "target",
+        serverUrl: "https://example.com/mcp",
+      });
+      const saving = provider.saveTokens({
+        access_token: "old",
+        token_type: "bearer",
+      });
+      await started;
+      const deleting = factory.deleteTokensForServer("target");
+      release();
+      await Promise.all([saving, deleting]);
+      expect(await tokenStore.loadTokens("target")).toBeUndefined();
+    });
+
+    it("reports credential deletion failures", async () => {
+      const tokenStore = makeMemoryStore();
+      tokenStore.deleteAll = async () => {
+        throw new Error("Unable to clear credentials");
+      };
+      const factory = new OAuthProviderFactory(noOpLogger, {
+        tokenStore,
+        envVars: emptyEnvVarResolver,
+      });
+      await expect(factory.deleteTokensForServer("target")).rejects.toThrow(
+        "Unable to clear credentials",
+      );
+    });
+
     it("should delete all tokens for a server", async () => {
       const tokenStore = makeMemoryStore();
       await tokenStore.saveTokens("myserver", {

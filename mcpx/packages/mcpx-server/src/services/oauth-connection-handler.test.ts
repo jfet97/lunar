@@ -783,6 +783,42 @@ describe("OAuthConnectionHandler", () => {
         expect(result.state).toBe(TEST_STATE);
       });
 
+      it("cannot restore a cancelled login after a fresh login has started", async () => {
+        let release!: () => void;
+        let start!: () => void;
+        const started = new Promise<void>((resolve) => {
+          start = resolve;
+        });
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let attempts = 0;
+        const handler = buildHandler({
+          provider: createMockProvider(),
+          auth: async () => {
+            attempts++;
+            if (attempts === 1) {
+              start();
+              await gate;
+            }
+            return "REDIRECT";
+          },
+        });
+        const oldLogin = handler.initiateOAuth(remoteServer);
+        await started;
+        const waitingLogin = handler.initiateOAuth(remoteServer);
+        const waitingRejected =
+          expect(waitingLogin).rejects.toThrow("flow was cancelled");
+        await handler.deleteOAuthTokensForServer(TEST_SERVER_NAME);
+        const fresh = await handler.initiateOAuth(remoteServer);
+        const rejected = expect(oldLogin).rejects.toThrow("flow was cancelled");
+        release();
+        await rejected;
+        await waitingRejected;
+        expect(await handler.initiateOAuth(remoteServer)).toEqual(fresh);
+        expect(attempts).toBe(2);
+      });
+
       it.each([
         ["without advertised offline_access", undefined],
         ["with advertised offline_access", ["openid", "offline_access"]],

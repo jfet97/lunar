@@ -41,6 +41,7 @@ export function mapTargetServerToMcpServer(server: TargetServer): McpServer {
     catalogItemId: server.catalogItemId,
     description: server.description,
     configuredDescription: server.configuredDescription,
+    oauth: server._type !== "stdio" ? server.oauth : undefined,
     command: server._type === "stdio" ? server.command : "",
     connectionError: getTargetServerConnectionError(server),
     env: server._type === "stdio" ? (server.env ?? {}) : {},

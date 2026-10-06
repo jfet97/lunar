@@ -625,6 +625,34 @@ export function buildControlPlaneRouter(
     }
   });
 
+  router.post("/auth/logout/:name", authGuard, async (req, res) => {
+    const name = req.params["name"];
+    if (!name) {
+      res.status(400).json({ message: "Target server name is required" });
+      return;
+    }
+    try {
+      await services.upstreamHandler.logoutOAuthForServer(name);
+      res.status(200).json({
+        message: "Saved authentication cleared. Sign in again to reconnect.",
+      });
+    } catch (error) {
+      logger.error("Failed to log out target server", {
+        name,
+        error: loggableError(error),
+      });
+      res
+        .status(
+          error instanceof NotFoundError
+            ? 404
+            : error instanceof NotAllowedError
+              ? 400
+              : 500,
+        )
+        .json({ message: makeError(error).message });
+    }
+  });
+
   router.post("/auth/initiate/:name", authGuard, async (req, res) => {
     const name = req.params["name"];
     if (!name) {
@@ -636,11 +664,20 @@ export function buildControlPlaneRouter(
     const callbackUrl = parsedBody.data?.callbackUrl
       ? parsedBody.data.callbackUrl
       : undefined;
+    const authVersion = services.upstreamHandler.getAuthVersion(name);
+    const assertAuthCurrent = (): void => {
+      if (services.upstreamHandler.getAuthVersion(name) !== authVersion) {
+        throw new NotAllowedError(
+          "Authentication was cleared. Start a new login.",
+        );
+      }
+    };
 
     try {
       // Try to reuse existing OAuth tokens first
       try {
         await services.upstreamHandler.reuseOAuthByName(name);
+        assertAuthCurrent();
         res.status(200).json({
           msg: "Successfully reused OAuth tokens for target server",
           targetServerName: name,
@@ -655,10 +692,12 @@ export function buildControlPlaneRouter(
       }
 
       // Initiate new OAuth flow
+      assertAuthCurrent();
       const result = await services.upstreamHandler.initiateOAuthForServer(
         name,
         callbackUrl,
       );
+      assertAuthCurrent();
 
       res.status(202).json({
         msg: "Successfully initiated OAuth flow for target server",

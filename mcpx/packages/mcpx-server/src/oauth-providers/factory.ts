@@ -15,6 +15,7 @@ import { McpxOAuthProviderI } from "./model.js";
 import { StaticOAuthProvider } from "./static.js";
 import { DEFAULT_STATIC_OAUTH } from "./defaults.js";
 import { OAuthTokenStoreI } from "../services/oauth-token-store.js";
+import { RevocableTokenStore } from "../services/revocable-token-store.js";
 import { OauthCredentialResolver } from "../services/env-var-manager.js";
 
 /**
@@ -27,7 +28,7 @@ export class OAuthProviderFactory {
   private softwareId?: string;
   private softwareVersion?: string;
   private staticOauthConfig?: StaticOAuth;
-  private tokenStore: OAuthTokenStoreI;
+  private tokenStore: RevocableTokenStore;
   private envVars: OauthCredentialResolver;
 
   constructor(
@@ -48,7 +49,7 @@ export class OAuthProviderFactory {
     this.clientUri = options.clientUri || CLIENT_URI;
     this.softwareId = options.softwareId;
     this.softwareVersion = options.softwareVersion || "1.0.0";
-    this.tokenStore = options.tokenStore;
+    this.tokenStore = RevocableTokenStore.forStore(options.tokenStore);
     this.envVars = options.envVars;
     this.staticOauthConfig = options.staticOauthConfig;
     this.logger = logger.child({ component: "OAuthProviderFactory" });
@@ -58,12 +59,7 @@ export class OAuthProviderFactory {
    * Deletes all OAuth credential entries for a given server.
    */
   async deleteTokensForServer(serverName: string): Promise<void> {
-    await this.tokenStore.deleteAll(serverName).catch((error) => {
-      this.logger.warn("Failed to delete OAuth credentials", {
-        serverName,
-        error,
-      });
-    });
+    await this.tokenStore.revoke(serverName);
   }
 
   /**
@@ -118,7 +114,7 @@ export class OAuthProviderFactory {
       softwareId: this.softwareId,
       softwareVersion: this.softwareVersion,
       logger: this.logger,
-      tokenStore: this.tokenStore,
+      tokenStore: this.tokenStore.forServer(serverName),
     });
   }
 
@@ -202,7 +198,7 @@ export class OAuthProviderFactory {
           callbackPath: this.callbackPath,
           callbackUrl,
           logger: this.logger,
-          tokenStore: this.tokenStore,
+          tokenStore: this.tokenStore.forServer(serverName),
         });
       }
       case "client_credentials": {
@@ -234,7 +230,7 @@ export class OAuthProviderFactory {
           callbackPath: this.callbackPath,
           callbackUrl,
           logger: this.logger,
-          tokenStore: this.tokenStore,
+          tokenStore: this.tokenStore.forServer(serverName),
         });
       }
     }
@@ -264,7 +260,7 @@ export class OAuthProviderFactory {
       callbackPath: this.callbackPath,
       callbackUrl,
       logger: this.logger,
-      tokenStore: this.tokenStore,
+      tokenStore: this.tokenStore.forServer(serverName),
     });
   }
 }

@@ -27,7 +27,7 @@ export interface OAuthSessionManagerI {
     callbackUrl?: string;
     catalogItemId?: string;
   }): McpxOAuthProviderI;
-  hasOAuthProvider(serverName: string): boolean; // Runtime: is a provider already instantiated for this server name?
+  hasOAuthProvider(serverName: string): boolean; // whether this server has managed OAuth credentials, even after a provider cache rebuild
   hasCatalogItemOAuth(catalogItemId: string): boolean;
   hasStaticOAuthForUrl(serverUrl: string): boolean; // Config: is static OAuth configured for this server's host?
   getExistingOAuthProvider(serverName: string): McpxOAuthProviderI | undefined;
@@ -44,6 +44,7 @@ export interface OAuthSessionManagerI {
 export class OAuthSessionManager implements ConfigConsumer<Config> {
   readonly name = "OAuthSessionManager";
   private oauthProviders: Map<string, McpxOAuthProviderI> = new Map();
+  private readonly knownOAuthServers = new Set<string>();
   private activeFlows: Map<string, OAuthFlowState> = new Map(); // state -> flow info
   private logger: Logger;
   private tokenStore: OAuthTokenStoreI;
@@ -142,6 +143,7 @@ export class OAuthSessionManager implements ConfigConsumer<Config> {
       });
 
       this.oauthProviders.set(serverName, provider);
+      this.knownOAuthServers.add(serverName);
       this.logger.info("Created OAuth provider for server", {
         serverName,
         serverUrl,
@@ -183,7 +185,7 @@ export class OAuthSessionManager implements ConfigConsumer<Config> {
   }
 
   hasOAuthProvider(serverName: string): boolean {
-    return this.oauthProviders.has(serverName);
+    return this.knownOAuthServers.has(serverName);
   }
 
   hasCatalogItemOAuth(catalogItemId: string): boolean {
@@ -250,6 +252,10 @@ export class OAuthSessionManager implements ConfigConsumer<Config> {
    */
   async deleteOAuthTokensForServer(serverName: string): Promise<void> {
     this.oauthProviders.delete(serverName);
+    this.knownOAuthServers.delete(serverName);
+    for (const [state, flow] of this.activeFlows) {
+      if (flow.serverName === serverName) this.activeFlows.delete(state);
+    }
     await this.providerFactory.deleteTokensForServer(serverName);
     this.logger.info("Deleted OAuth tokens for server", { serverName });
   }

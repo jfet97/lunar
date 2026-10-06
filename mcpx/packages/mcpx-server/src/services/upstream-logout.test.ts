@@ -1,0 +1,315 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { noOpLogger } from "@aigw/core/logging";
+import { ManualClock } from "@aigw/core/time";
+import { ConfigService, DEFAULT_CONFIG } from "../config.js";
+import { resetEnv } from "../env.js";
+import type { RemoteTargetServer } from "../model/target-servers.js";
+import { OAuthSessionManager } from "../server/oauth-session-manager.js";
+import { CapabilityRegistry } from "./capability-registry.js";
+import { CapabilityResolver } from "./capability-resolver.js";
+import { DiskTokenStore } from "./disk-token-store.js";
+import { OAuthConnectionHandler } from "./oauth-connection-handler.js";
+import { SystemStateTracker } from "./system-state.js";
+import { ToolTokenEstimator } from "./tool-token-estimator.js";
+import { UpstreamHandler } from "./upstream-handler.js";
+import type { ExtendedClientI } from "./client-extension.js";
+
+describe("upstream OAuth logout", () => {
+  let directory: string;
+  let originalEnvironment: NodeJS.ProcessEnv;
+
+  beforeEach(async () => {
+    originalEnvironment = { ...process.env };
+    process.env["VERSION"] = "test";
+    process.env["INSTANCE_ID"] = "test-instance";
+    process.env["ENABLE_PROMPT_CAPABILITY"] = "true";
+    resetEnv();
+    directory = await fs.mkdtemp(path.join(os.tmpdir(), "mcpx-logout-"));
+  });
+
+  afterEach(async () => {
+    process.env = originalEnvironment;
+    resetEnv({
+      ...process.env,
+      VERSION: process.env["VERSION"] ?? "test",
+      INSTANCE_ID: process.env["INSTANCE_ID"] ?? "test-instance",
+    });
+    await fs.rm(directory, { recursive: true, force: true });
+  });
+
+  async function makeHarness(serverName = "docs") {
+    const targetServer: RemoteTargetServer = {
+      name: serverName,
+      type: "streamable-http",
+      url: "https://example.com/mcp",
+      description: "Documentation",
+    };
+    const config = new ConfigService(
+      DEFAULT_CONFIG,
+      { load: () => ({ success: true, data: DEFAULT_CONFIG }), save: () => {} },
+      noOpLogger,
+    );
+    await config.initialize();
+    const catalog = {
+      subscribe: () => () => {},
+      getCatalog: () => [],
+      getDisplayNameByName: () => undefined,
+      getDisplayNameById: () => undefined,
+      isServerApproved: () => true,
+      isToolApproved: () => true,
+      isPromptApproved: () => true,
+      getPerCatalogItemOAuth: () => undefined,
+    };
+    const registry = new CapabilityRegistry(noOpLogger);
+    const resolver = new CapabilityResolver(
+      registry,
+      catalog as never,
+      { hasPermission: () => true },
+      noOpLogger,
+    );
+    const state = new SystemStateTracker(new ManualClock(), noOpLogger);
+    const store = new DiskTokenStore(directory, noOpLogger);
+    const sessions = new OAuthSessionManager(
+      noOpLogger,
+      store,
+      { resolveOauthCredential: () => undefined },
+      catalog as never,
+    );
+    const provider = sessions.getOrCreateOAuthProvider({
+      serverName,
+      serverUrl: targetServer.url,
+    });
+    await provider.saveTokens({
+      access_token: "old-token",
+      refresh_token: "old-refresh",
+      token_type: "bearer",
+    });
+    await provider.saveCodeVerifier("old-verifier");
+    await provider.saveClientInformation?.({
+      client_id: "old-client",
+      redirect_uris: [],
+    });
+    const extended = {
+      close: jest.fn(async () => {}),
+      onToolsListChanged: () => () => {},
+      onPromptsListChanged: () => () => {},
+      listTools: jest.fn(async () => ({
+        tools: [
+          { name: "read", inputSchema: { type: "object", properties: {} } },
+        ],
+        toolParentNames: {},
+      })),
+      listPrompts: async () => ({ prompts: [] }),
+      callTool: jest.fn(async () => ({ content: [] })),
+      getPrompt: jest.fn(async () => ({ messages: [] })),
+    };
+    const oauth = new OAuthConnectionHandler(
+      sessions,
+      { build: async () => extended } as never,
+      noOpLogger,
+      {
+        discoverOAuthProtectedResourceMetadata: async () => {
+          throw new Error("No metadata");
+        },
+        discoverAuthorizationServerMetadata: async () => undefined,
+        auth: async (freshProvider) => {
+          await freshProvider.redirectToAuthorization(
+            new URL("https://example.com/login"),
+          );
+          return "REDIRECT";
+        },
+      },
+    );
+    const writeConfig = jest.fn();
+    const upstream = new UpstreamHandler(
+      state,
+      { writeTargetServers: writeConfig } as never,
+      { createConnection: async () => extended } as never,
+      oauth,
+      catalog as never,
+      new ToolTokenEstimator(),
+      registry,
+      resolver,
+      config,
+      noOpLogger,
+      {
+        pingIntervalMs: 0,
+        pingTimeoutMs: 100,
+        pingFailureThreshold: 3,
+        reconnectBaseDelayMs: 10,
+      },
+    );
+    await upstream.addClient(targetServer);
+    return {
+      targetServer,
+      upstream,
+      extended,
+      writeConfig,
+      store,
+      sessions,
+      provider,
+      registry,
+      resolver,
+      state,
+      config,
+      oauth,
+    };
+  }
+
+  it.each(["docs", "Docs"])(
+    "clears credentials and callbacks for %s, retains config and allows fresh login",
+    async (serverName) => {
+      const harness = await makeHarness(serverName);
+      try {
+        harness.sessions.startOAuthFlow(
+          serverName,
+          harness.targetServer.url,
+          "old-state",
+        );
+        expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(
+          true,
+        );
+        const writes = harness.writeConfig.mock.calls.length;
+        await harness.upstream.logoutOAuthForServer("  Docs ");
+        expect(harness.extended.close).toHaveBeenCalled();
+        expect(await fs.readdir(directory)).toEqual([]);
+        expect(harness.sessions.getOAuthFlow("old-state")).toBeUndefined();
+        expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(
+          false,
+        );
+        expect(
+          harness.registry.servers
+            .get("docs")
+            ?.tools?.every((tool) => tool.origin === "internal"),
+        ).toBe(true);
+        expect(harness.state.export().targetServers[0]?.state).toEqual({
+          type: "pending-auth",
+        });
+        expect(harness.upstream.servers).toEqual([harness.targetServer]);
+        expect(harness.writeConfig).toHaveBeenCalledTimes(writes);
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+        await expect(
+          harness.provider.saveTokens({
+            access_token: "late-token",
+            token_type: "bearer",
+          }),
+        ).rejects.toThrow("authentication was cleared");
+        const login = await harness.upstream.initiateOAuthForServer("docs");
+        expect(new URL(login.authorizationUrl).pathname).toBe("/login");
+        expect(harness.sessions.getOAuthFlow(login.state)).toBeDefined();
+      } finally {
+        await harness.upstream.shutdown();
+        harness.resolver.shutdown();
+        harness.state.stopRetentionSweep();
+      }
+    },
+  );
+
+  it("rejects an old device-flow completion after a description edit and logout", async () => {
+    const harness = await makeHarness();
+    let onComplete!: (client: ExtendedClientI) => void | Promise<void>;
+    jest
+      .spyOn(harness.oauth, "initiateOAuth")
+      .mockImplementation(async (_target, options) => {
+        if (!options?.onComplete)
+          throw new Error("Missing completion callback");
+        onComplete = options.onComplete;
+        return {
+          authorizationUrl: "https://example.com/login",
+          state: "old-state",
+        };
+      });
+    try {
+      await harness.upstream.initiateOAuthForServer("docs");
+      harness.upstream.updateClientDescription("docs", "Updated description");
+      await harness.upstream.logoutOAuthForServer("docs");
+      await expect(
+        onComplete(harness.extended as unknown as ExtendedClientI),
+      ).rejects.toThrow("was logged out");
+      expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(false);
+      expect(harness.state.export().targetServers[0]?.state).toEqual({
+        type: "pending-auth",
+      });
+    } finally {
+      await harness.upstream.shutdown();
+      harness.resolver.shutdown();
+      harness.state.stopRetentionSweep();
+    }
+  });
+
+  it("reports deletion failures and permits retry without reconnecting", async () => {
+    const harness = await makeHarness();
+    const deletion = jest
+      .spyOn(harness.store, "deleteAll")
+      .mockRejectedValue(new Error("Unable to delete credentials"));
+    try {
+      await expect(
+        harness.upstream.logoutOAuthForServer("docs"),
+      ).rejects.toThrow("Unable to delete credentials");
+      expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(false);
+      deletion.mockRestore();
+      await harness.upstream.logoutOAuthForServer("docs");
+      expect(await fs.readdir(directory)).toEqual([]);
+    } finally {
+      await harness.upstream.shutdown();
+      harness.resolver.shutdown();
+      harness.state.stopRetentionSweep();
+    }
+  });
+
+  it("can log out after an unrelated configuration update rebuilds provider caches", async () => {
+    const harness = await makeHarness();
+    try {
+      await harness.sessions.prepareConfig(DEFAULT_CONFIG);
+      await harness.sessions.commitConfig();
+      expect(harness.sessions.getExistingOAuthProvider("docs")).toBeUndefined();
+      expect(harness.upstream.isOAuthServer("docs")).toBe(true);
+      await harness.upstream.logoutOAuthForServer("docs");
+      expect(await fs.readdir(directory)).toEqual([]);
+    } finally {
+      await harness.upstream.shutdown();
+      harness.resolver.shutdown();
+      harness.state.stopRetentionSweep();
+    }
+  });
+
+  it("blocks dispatch if the server is disabled while token inspection is pending", async () => {
+    const harness = await makeHarness();
+    let release!: () => void;
+    let start!: () => void;
+    const started = new Promise<void>((resolve) => {
+      start = resolve;
+    });
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    jest.spyOn(harness.provider, "tokens").mockImplementation(async () => {
+      start();
+      await gate;
+      return { access_token: "old-token", token_type: "bearer" };
+    });
+    try {
+      const call = harness.upstream.callTool("docs", { name: "read" });
+      await started;
+      await harness.config.withLock(() =>
+        harness.config.updateConfig({
+          ...DEFAULT_CONFIG,
+          targetServerAttributes: { docs: { inactive: true } },
+        }),
+      );
+      const rejected = expect(call).rejects.toThrow("inactive");
+      release();
+      await rejected;
+      expect(harness.extended.callTool).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await harness.upstream.shutdown();
+      harness.resolver.shutdown();
+      harness.state.stopRetentionSweep();
+    }
+  });
+});
