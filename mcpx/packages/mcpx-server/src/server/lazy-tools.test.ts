@@ -1,5 +1,9 @@
 import { CallToolRequest, Tool } from "@modelcontextprotocol/sdk/types.js";
-import { LAZY_TOOLS, resolveLazyToolRequest } from "./lazy-tools.js";
+import {
+  isLazyManagementCapability,
+  LAZY_TOOLS,
+  resolveLazyToolRequest,
+} from "./lazy-tools.js";
 
 function request(name: string, args: Record<string, unknown>): CallToolRequest {
   return { method: "tools/call", params: { name, arguments: args } };
@@ -24,6 +28,35 @@ describe("lazy tool discovery", () => {
     expect(
       LAZY_TOOLS.find((tool) => tool.name === "mcpx_call_tool")?.annotations
         ?.readOnlyHint,
+    ).toBe(false);
+  });
+
+  it("recognizes only registered management capabilities from the internal MCPX provider", () => {
+    const capability = {
+      serverName: "mcpx",
+      capabilityName: "management_list_servers",
+      definition: { name: "mcpx__management_list_servers" },
+    };
+    expect(
+      isLazyManagementCapability({ ...capability, origin: "internal" }),
+    ).toBe(true);
+    expect(
+      isLazyManagementCapability({ ...capability, origin: "upstream" }),
+    ).toBe(false);
+    expect(
+      isLazyManagementCapability({
+        ...capability,
+        serverName: "dynamic",
+        origin: "internal",
+      }),
+    ).toBe(false);
+    expect(
+      isLazyManagementCapability({
+        ...capability,
+        capabilityName: "management_forged_tool",
+        definition: { name: "mcpx__management_forged_tool" },
+        origin: "internal",
+      }),
     ).toBe(false);
   });
 
@@ -188,5 +221,22 @@ describe("lazy tool discovery", () => {
         tool("svc__read"),
       ]),
     ).toMatchObject({ kind: "result", result: { isError: true } });
+  });
+
+  it("passes only explicitly permitted direct management names through", async () => {
+    const direct = request("mcpx__management_list_servers", {});
+    expect(
+      await resolveLazyToolRequest(
+        direct,
+        [],
+        undefined,
+        undefined,
+        new Set([direct.params.name]),
+      ),
+    ).toEqual({ kind: "call", request: direct });
+    expect(await resolveLazyToolRequest(direct, [])).toMatchObject({
+      kind: "result",
+      result: { isError: true },
+    });
   });
 });

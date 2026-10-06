@@ -40,7 +40,7 @@ Once MCPX is running, point your client at one of these endpoints:
 
 | Endpoint | How the client sees tools |
 | --- | --- |
-| `http://localhost:9000/mcp/lazy` | Four gateway tools. The client discovers individual upstream tools when needed. |
+| `http://localhost:9000/mcp/lazy` | Four discovery tools plus permitted built-in management tools. Upstream tools are discovered when needed. |
 | `http://localhost:9000/mcp` | The complete catalog of upstream tools visible to that client. |
 
 The examples below use the on-demand endpoint. Replace `localhost:9000` with your gateway address when running it elsewhere.
@@ -74,7 +74,7 @@ Reconnect after changing the endpoint or upgrading the gateway. An existing sess
 
 ## Discover tools without loading the whole catalog
 
-The `/mcp/lazy` endpoint advertises four tools. Its startup instructions ask the client to discover the available servers immediately, then find the tools relevant to the task.
+The `/mcp/lazy` endpoint advertises four discovery tools and, by default, nine built-in management tools. Its startup instructions ask the client to discover the available servers immediately. Management tools can be called directly; use discovery for upstream tools.
 
 | Step | Tool | Result |
 | --- | --- | --- |
@@ -92,10 +92,9 @@ See the [tool discovery guide](mcpx/docs/lazy-tools.md) for search pagination, l
 ## Manage MCP servers from an MCP client
 
 MCPX registers nine built-in management tools on `/mcp` by default. On
-`/mcp/lazy`, they appear in `mcpx_list_servers` as the `mcpx` server and can
-be found with `mcpx_search_tools`, inspected with `mcpx_get_tool_schema`, and
-called with `mcpx_call_tool`. Their qualified names use the `mcpx__` prefix,
-such as `mcpx__management_list_servers`.
+`/mcp/lazy`, permitted management tools are advertised directly alongside the
+four discovery tools. Their qualified names use the `mcpx__` prefix, such as
+`mcpx__management_list_servers`; call them directly without searching first.
 
 The tools list servers; add, update, enable, disable, and remove server
 configurations; create backups; and start OAuth login or clear saved OAuth

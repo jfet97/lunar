@@ -1,10 +1,11 @@
 # On-demand tool discovery
 
-Connect an MCP client to `http://localhost:9000/mcp/lazy` to expose four tools
-instead of the complete upstream catalog. This endpoint is built into MCPX and
-uses the same authentication, upstream connections, permissions, and sessions.
-The existing `/mcp` and `/sse` endpoints remain available for clients that need
-the complete catalog and for administration.
+Connect an MCP client to `http://localhost:9000/mcp/lazy` to expose four
+discovery tools and permitted built-in management tools instead of the complete
+upstream catalog. The default owner sees nine management tools. This endpoint
+is built into MCPX and uses the same authentication, upstream connections,
+permissions, and sessions. The existing `/mcp` and `/sse` endpoints remain
+available for clients that need the complete catalog.
 
 ## Discovery and execution
 
@@ -15,7 +16,10 @@ the complete catalog and for administration.
 2. Call `mcpx_search_tools` with service/task keywords. It returns five matches by
    default, including names, short descriptions, and tool annotations.
 3. Call `mcpx_get_tool_schema` with one returned name to obtain its full definition.
-4. Call `mcpx_call_tool` with that name and an `arguments` object matching its schema.
+4. Call `mcpx_call_tool` with that name and an `arguments` object matching its
+   schema. Permitted built-in management tools are advertised directly under
+   names such as `mcpx__management_list_servers`; call them without search,
+   schema lookup, or the execution wrapper.
 
 Server descriptions use the optional `description` field in each `mcpServers`
 entry in `config/mcp.json` first, then the upstream initialization response,
@@ -38,10 +42,11 @@ tool directly. Tool names returned by discovery are the same qualified names
 advertised by the full endpoint.
 
 Search, schema lookup, and execution check the caller's current permitted tool
-set. Cached embeddings do not grant access. Execution goes through the ordinary
-gateway path, including authorization forwarding, audit records, metrics, and
-correlated-call deduplication. Original tool results are returned unchanged.
-Sessions cannot be reused between the full and lazy endpoints.
+set. Cached embeddings do not grant access. Direct management calls and wrapped
+upstream calls go through the ordinary gateway path, including authorization
+forwarding, audit records, metrics, and correlated-call deduplication. Original
+tool results are returned unchanged. Sessions cannot be reused between the
+full and lazy endpoints.
 
 ## Local semantic retrieval
 
