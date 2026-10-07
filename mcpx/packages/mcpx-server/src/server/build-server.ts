@@ -20,6 +20,7 @@ import { buildDownstreamTransportsRouter } from "./downstream-transports.js";
 import { buildSkillsRouter } from "./skills.js";
 import { bindUIWebsocket } from "./ws-ui.js";
 import { LOG_FLAGS } from "../log-flags.js";
+import { buildJsonBodyRouter } from "./json-body.js";
 
 export async function buildMcpxServer(
   config: ConfigService,
@@ -64,7 +65,7 @@ export async function buildMcpxServer(
       env.ACCESS_LOG_LEVEL,
     ),
   );
-  app.use(express.json()); // Crucial - MCP routes expect JSON bodies!
+  app.use(buildJsonBodyRouter());
 
   app.get("/healthcheck", (_: express.Request, res: express.Response) => {
     res.send({ status: "OK" });
