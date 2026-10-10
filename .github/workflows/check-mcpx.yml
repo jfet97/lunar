@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   regression:
-    if: github.repository_owner == 'jfet97'
+    if: github.repository_owner == 'jfet97-home'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

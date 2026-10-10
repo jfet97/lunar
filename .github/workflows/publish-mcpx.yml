@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   image:
-    if: github.repository_owner == 'jfet97'
+    if: github.repository_owner == 'jfet97-home'
     runs-on: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
@@ -80,8 +80,8 @@ jobs:
           platforms: linux/arm64
           push: true
           tags: |
-            ghcr.io/jfet97/mcpx:${{ github.sha }}
-            ghcr.io/jfet97/mcpx:main
+            ghcr.io/${{ github.repository_owner }}/mcpx:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/mcpx:main
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
@@ -90,4 +90,4 @@ jobs:
       - name: Record immutable image
         env:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "ghcr.io/jfet97/mcpx@${IMAGE_DIGEST}" >> "$GITHUB_STEP_SUMMARY"
+        run: echo "ghcr.io/${{ github.repository_owner }}/mcpx@${IMAGE_DIGEST}" >> "$GITHUB_STEP_SUMMARY"
