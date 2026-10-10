@@ -31,7 +31,7 @@ flowchart LR
 | Local semantic search | Finds tools by meaning as well as keywords, using a bundled multilingual model on CPU. No external inference service is required; keyword search remains available if the model cannot run. |
 | Immediate access control and OAuth logout | Enforces the existing activation toggle for connected clients and lets you clear a server's saved authentication before signing in again. |
 | Local saved setups | Lets a standalone gateway save named configurations and restore them from the UI. |
-| Full backup export | Exports configuration and durable authentication state, with available deployment and client files, for manual recovery. |
+| Gateway backup export | Exports configuration and durable authentication state, available deployment and client files, and explicitly selected companion files, with a manual recovery guide. |
 | Published fork images | Builds Linux ARM64 images from the fork, with commit tags and regression checks. |
 
 ## Connect a client
@@ -131,31 +131,50 @@ for details and the logout API.
 
 Both actions live on the **Saved Setups** page, but solve different problems:
 
-| Question | Saved setup | Full backup |
+| Question | Saved setup | Gateway backup |
 | --- | --- | --- |
 | Use it when… | You want to keep a configuration and switch back to it later. | You want a copy for recovery after losing gateway data or moving an installation. |
-| Example | Save your working setup before experimenting with servers or access rules, then restore it from the UI. | Export the gateway's files before moving to another machine, then restore them manually. |
+| Example | Save your working setup before experimenting with servers or access rules, then restore it from the UI. | Export before moving machines, then import gateway state and recover companion services separately. |
 | Server and gateway configuration | Included. | Included. |
 | Previously saved setups | Each saved setup stores its own configuration. | Includes locally stored saved setups. |
 | OAuth login state | Not included. | Includes durable tokens and registered OAuth client information. |
 | Deployment and client configuration | Not included. | Included when the files are available to the gateway. |
-| How you restore it | Choose **Restore** in the UI. | Stop MCPX and copy the exported files back into the appropriate locations. |
+| Companion MCP services | Connection settings only. | Connection settings and explicitly selected files; images and service data need separate recovery. |
+| How you restore it | Choose **Restore** in the UI. | Preview and queue **Import Gateway Backup**, then restart MCPX; deployment, client, and companion files are recovered manually. |
 
 ### Save a setup to switch configurations
 
 A saved setup records the configured MCP servers and gateway settings. Restoring it applies those settings to the running gateway. OAuth authentication state is separate, so a saved setup cannot recover lost login tokens.
 
+For example, suppose MCPX connects to Honeycomb through OAuth and to an
+`atlassian-media` Docker service at `http://atlassian-media:9005/mcp`. Save a setup
+named **Working configuration** before changing access rules or removing a server.
+Restoring it brings back those connection settings and access rules. It does not
+recreate the `atlassian-media` container, restore its environment variables, or
+recover a lost Honeycomb login.
+
+Literal environment values entered in an MCPX server entry are included. A
+reference such as `{ "fromEnv": "API_TOKEN" }` preserves the reference; the value
+must still be supplied from its external source. Variables defined only in another
+container's Compose or `.env` file are outside that saved setup.
+
 Standalone instances store setups in `.mcpx/saved-setups`, inside MCPX's persistent state. Enterprise instances and instances authenticated to Hub keep using Hub storage. A locally saved setup lives with the gateway's data; losing that data also loses the setup.
 
-### Export a full backup for recovery
+### Export a gateway backup for recovery
 
-Choose **Export Full Backup** to write a separate directory containing configuration, locally saved setups, durable OAuth state, and any available deployment and client configuration files. The export includes a manifest showing what was included or omitted. Hub-managed data must be recovered through Hub.
+Choose **Export Gateway Backup** to write a separate directory containing configuration, locally saved setups, durable OAuth state, and any available deployment and client configuration files. The export includes a manifest showing what was included or omitted, an upstream service inventory, and `RESTORE.md` with manual recovery steps. Hub-managed data must be recovered through Hub.
+
+Companion service files can be included through an explicit file selection. Docker installation, images, other services' volumes, and their running environments are not exported. Deployment and client files are reference copies: adapt their paths and networks on another machine. See the guide below for selecting companion Compose, environment, and configuration files.
 
 The default destination is `~/.config/mcpx/backups`. With Docker, mount a host directory and configure the export destination so the files are accessible outside the container. Exports use private file permissions because they can contain credentials.
 
-Backups are created when you choose to export them. A full backup is restored manually; the Saved Setups **Restore** action only applies a saved configuration.
+Backups are created when you choose to export them. To import a gateway backup on a standalone instance, place the exported folder in the destination gateway's backup directory, choose **Import Gateway Backup**, preview it, then queue it and restart MCPX. The import replaces gateway configuration, locally saved setups, and OAuth state before connections open. It retains previous gateway files for manual rollback. Deployment, client, and companion files still require manual recovery. The Saved Setups **Restore** action only applies a saved configuration.
 
 See the [backup and restore guide](mcpx/docs/local-saved-setups-and-export.md) for exact coverage and restore steps, and the [Compose overlay](mcpx/examples/compose.local-export.yaml) for host mounts.
+
+See [Understanding MCPX backups](mcpx/docs/backup-examples.md) for worked examples
+covering remote MCPs, local processes, Docker services, literal credentials,
+environment references, and recovery when images or services are missing.
 
 ## Run the fork
 

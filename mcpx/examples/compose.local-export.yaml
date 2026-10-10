@@ -7,9 +7,12 @@ services:
       MCPX_EXPORT_IMAGE_PATH: /host-mcpx/image.txt
       MCPX_EXPORT_CLAUDE_CONFIG_PATH: /host-clients/claude-config.json
       MCPX_EXPORT_CODEX_CONFIG_PATH: /host-clients/codex-config.toml
+      # optional: select companion files explicitly; see docs/local-saved-setups-and-export.md.
+      # MCPX_EXPORT_COMPANIONS_PATH: /host-companions/files.json
     volumes:
       - ${HOME}/.config/mcpx/backups:/mcpx-backups
       - ${HOME}/.config/mcpx/compose.yaml:/host-mcpx/compose.yaml:ro
       - ${HOME}/.config/mcpx/image.txt:/host-mcpx/image.txt:ro
       - ${CLAUDE_CONFIG_DIR:-$HOME}/.claude.json:/host-clients/claude-config.json:ro
       - ${HOME}/.codex/config.toml:/host-clients/codex-config.toml:ro
+      # - ${HOME}/.config/mcpx/backup-companions:/host-companions:ro

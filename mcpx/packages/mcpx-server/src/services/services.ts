@@ -56,6 +56,10 @@ import { BehaviorService } from "./behavior-service.js";
 import { LocalSavedSetups } from "./local-saved-setups.js";
 import { LocalExportService } from "./local-export-service.js";
 import { ManagementToolsService } from "./management-tools.js";
+import {
+  getLocalImportOptions,
+  LocalImportService,
+} from "./local-import-service.js";
 
 export interface ServicesOptions {
   hubUrl?: string;
@@ -87,6 +91,7 @@ export class Services {
   private _toolTokenEstimator: ToolTokenEstimator;
   private _localSavedSetups: LocalSavedSetups;
   private _localExportService: LocalExportService;
+  private _localImportService: LocalImportService;
 
   private logger: TelemetryLogger;
   private initialized = false;
@@ -99,6 +104,7 @@ export class Services {
   ) {
     this._config = config;
     const startupLogger = logger.child({ component: "Services" });
+    this._localImportService = new LocalImportService(getLocalImportOptions());
 
     const homeDirectory = homedir();
     const configuredPath = (
@@ -139,6 +145,9 @@ export class Services {
       serversConfigPath,
       serversConfigSourceRoot: path.dirname(serversConfigPath),
       stateDirectory: path.join(process.cwd(), ".mcpx"),
+      companionsPath: env.MCPX_EXPORT_COMPANIONS_PATH
+        ? path.resolve(env.MCPX_EXPORT_COMPANIONS_PATH)
+        : undefined,
       composePath,
       composeSourceRoot: env.MCPX_EXPORT_COMPOSE_PATH
         ? path.dirname(composePath)
@@ -729,5 +738,10 @@ export class Services {
   get localExportService(): LocalExportService {
     this.ensureInitialized();
     return this._localExportService;
+  }
+
+  get localImportService(): LocalImportService {
+    this.ensureInitialized();
+    return this._localImportService;
   }
 }

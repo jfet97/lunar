@@ -11,6 +11,8 @@ import {
   SaveSetupResponse,
   saveSetupRequestSchema,
   updateTargetServerRequestSchema,
+  localBackupSelectionSchema,
+  localBackupImportRequestSchema,
 } from "@mcpx/shared-model";
 import { makeError } from "@aigw/core/data";
 import { loggableError } from "@aigw/core/logging";
@@ -27,6 +29,7 @@ import {
 import { TargetServer, targetServerSchema } from "../model/target-servers.js";
 import { Services } from "../services/services.js";
 import { redactEnv } from "../services/redact.js";
+import { BackupImportError } from "../services/local-import-service.js";
 import {
   resolveEnvToRuntime,
   MissingRequiredEnvError,
@@ -603,6 +606,68 @@ export function buildControlPlaneRouter(
       const error = loggableError(e);
       logger.error("Failed to export local backup", { error });
       res.status(500).json({ message: error.errorMessage });
+    }
+  });
+
+  const importGuard: express.RequestHandler = (_req, res, next) => {
+    if (shouldUseHubSavedSetups() || !env.READ_TARGET_SERVERS_FROM_FILE) {
+      res.status(409).json({
+        message:
+          "Backup imports require a standalone gateway with file-backed server configuration. Recover Hub-managed data through Hub.",
+      });
+      return;
+    }
+    next();
+  };
+  const handleImportError = (res: express.Response, error: unknown): void => {
+    res.status(error instanceof BackupImportError ? error.status : 500).json({
+      message:
+        error instanceof BackupImportError
+          ? error.message
+          : "Backup import failed due to a filesystem error. No live changes are applied while queuing an import.",
+    });
+  };
+  router.get("/backup/import", authGuard, importGuard, async (_req, res) => {
+    try {
+      res.json(await services.localImportService.pending());
+    } catch (error) {
+      handleImportError(res, error);
+    }
+  });
+  router.post("/backup/preview", authGuard, importGuard, async (req, res) => {
+    const input = localBackupSelectionSchema.safeParse(req.body);
+    if (!input.success) {
+      res
+        .status(400)
+        .json({ message: "Use a backup folder name, without a path." });
+      return;
+    }
+    try {
+      res.json(await services.localImportService.preview(input.data.backupId));
+    } catch (error) {
+      handleImportError(res, error);
+    }
+  });
+  router.post("/backup/import", authGuard, importGuard, async (req, res) => {
+    const input = localBackupImportRequestSchema.safeParse(req.body);
+    if (!input.success) {
+      res
+        .status(400)
+        .json({ message: "Preview a valid backup before importing it." });
+      return;
+    }
+    try {
+      res.status(202).json(await services.localImportService.stage(input.data));
+    } catch (error) {
+      handleImportError(res, error);
+    }
+  });
+  router.delete("/backup/import", authGuard, importGuard, async (_req, res) => {
+    try {
+      await services.localImportService.cancel();
+      res.status(204).end();
+    } catch (error) {
+      handleImportError(res, error);
     }
   });
 

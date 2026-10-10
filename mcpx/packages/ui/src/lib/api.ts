@@ -26,6 +26,9 @@ import type {
   ScopeSubject,
   FeatureEnabledResponse,
   LocalExportResponse,
+  LocalBackupPreview,
+  LocalBackupImportRequest,
+  LocalBackupImportResponse,
 } from "@mcpx/shared-model";
 import {
   singleToolGroupSchema,
@@ -46,6 +49,8 @@ import {
   enabledSkillsResponseSchema,
   skillsFeatureEnabledSchema,
   localExportResponseSchema,
+  localBackupPreviewSchema,
+  localBackupImportResponseSchema,
 } from "@mcpx/shared-model";
 import z from "zod/v4";
 import { getAdminWebserverURL, getMcpxServerURL } from "@/config/api-config";
@@ -491,6 +496,41 @@ class ApiClient {
       {},
       localExportResponseSchema,
     );
+  }
+
+  async previewLocalBackup(backupId: string): Promise<LocalBackupPreview> {
+    return this.requestWithBody(
+      "/backup/preview",
+      "POST",
+      { backupId },
+      localBackupPreviewSchema,
+    );
+  }
+
+  async importLocalBackup(
+    input: LocalBackupImportRequest,
+  ): Promise<LocalBackupImportResponse> {
+    return this.requestWithBody(
+      "/backup/import",
+      "POST",
+      input,
+      localBackupImportResponseSchema,
+    );
+  }
+
+  async getPendingBackupImport(): Promise<LocalBackupImportResponse | null> {
+    return this.request(
+      "/backup/import",
+      localBackupImportResponseSchema.nullable(),
+    );
+  }
+
+  async cancelBackupImport(): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/backup/import`, {
+      method: "DELETE",
+      credentials: "include",
+    });
+    if (!response.ok) throw await getApiError(response);
   }
 
   async saveSetup(props: { description: string }): Promise<SaveSetupResponse> {

@@ -107,6 +107,7 @@ const envSchema = z
     MCPX_EXPORT_IMAGE_PATH: z.string().optional(),
     MCPX_EXPORT_CLAUDE_CONFIG_PATH: z.string().optional(),
     MCPX_EXPORT_CODEX_CONFIG_PATH: z.string().optional(),
+    MCPX_EXPORT_COMPANIONS_PATH: z.string().optional(),
     READ_TARGET_SERVERS_FROM_FILE: z.stringbool().default(true),
     OAUTH_DISCOVERY_TIMEOUT_MILLIS: z.coerce.number().default(3000),
     DIND_ENABLED: z.stringbool().default(false),

@@ -16,6 +16,10 @@ import {
 } from "@aigw/core/logging";
 import { GracefulShutdown } from "@aigw/core/app";
 import { compileRanges } from "@aigw/core/ip-access";
+import {
+  getLocalImportOptions,
+  LocalImportService,
+} from "./services/local-import-service.js";
 
 const { MCPX_PORT, LOG_LEVEL } = env;
 
@@ -104,6 +108,16 @@ async function main(): Promise<void> {
 
   logger.telemetry.info("Starting MCPX server...");
   logger.debug("Env vars read", redactEnv(env));
+  const importer = new LocalImportService(getLocalImportOptions());
+  if (
+    await importer.applyPending(
+      !env.IS_ENTERPRISE && env.READ_TARGET_SERVERS_FROM_FILE,
+    )
+  ) {
+    logger.info(
+      "Applied queued gateway backup before loading configuration and OAuth state",
+    );
+  }
   const configStore: ConfigStore = env.IS_ENTERPRISE
     ? new InMemoryConfigStore()
     : new FileConfigStore(env.APP_CONFIG_PATH);

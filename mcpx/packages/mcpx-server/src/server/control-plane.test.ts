@@ -11,6 +11,8 @@ import { createServer, Server } from "node:http";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { stringify } from "yaml";
+import { DEFAULT_CONFIG } from "../config.js";
 import type {
   ListSavedSetupsResponse,
   SaveSetupResponse,
@@ -19,6 +21,7 @@ import { savedSetupItemSchema } from "@mcpx/shared-model";
 import { noOpLogger } from "@aigw/core/logging";
 import { resetEnv } from "../env.js";
 import { LocalExportService } from "../services/local-export-service.js";
+import { LocalImportService } from "../services/local-import-service.js";
 import { LocalSavedSetups } from "../services/local-saved-setups.js";
 import { Services } from "../services/services.js";
 import { CurrentSetup } from "../services/setup-manager.js";
@@ -87,6 +90,12 @@ describe("control plane local saved setups and exports", () => {
       },
       localSavedSetups,
       localExportService: makeExportService(tempDirectory),
+      localImportService: new LocalImportService({
+        backupDirectory: path.join(tempDirectory, "backups"),
+        appConfigPath: path.join(tempDirectory, "config", "app.yaml"),
+        serversConfigPath: path.join(tempDirectory, "config", "mcp.json"),
+        stateDirectory: path.join(tempDirectory, ".mcpx"),
+      }),
       setupManager: {
         captureCurrentSetup: () => currentSetup,
         applySetup: async (setup: unknown) => {
@@ -94,7 +103,7 @@ describe("control plane local saved setups and exports", () => {
         },
       },
       controlPlane: {
-        getAppConfig: () => ({ yaml: "toolGroups: []\n" }),
+        getAppConfig: () => ({ yaml: stringify(DEFAULT_CONFIG) }),
       },
       upstreamHandler: { servers: [runtimeServer()] },
     } as unknown as Services;
@@ -333,7 +342,73 @@ describe("control plane local saved setups and exports", () => {
         path.join(result.destination, "config/app.yaml"),
         "utf8",
       ),
-    ).toBe("toolGroups: []\n");
+    ).toBe(stringify(DEFAULT_CONFIG));
+  });
+
+  it("previews, queues, lists, and cancels a backup import through the control plane", async () => {
+    await fs.mkdir(path.join(tempDirectory, ".mcpx"));
+    const exported = await fetch(`${baseUrl}/backup/export`, {
+      method: "POST",
+    });
+    const backup = await exported.json();
+    const previewResponse = await fetch(`${baseUrl}/backup/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ backupId: backup.backupId }),
+    });
+    expect(previewResponse.status).toBe(200);
+    const preview = await previewResponse.json();
+    const queued = await fetch(`${baseUrl}/backup/import`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        backupId: backup.backupId,
+        fingerprint: preview.fingerprint,
+      }),
+    });
+    expect(queued.status).toBe(202);
+    expect(
+      await (await fetch(`${baseUrl}/backup/import`)).json(),
+    ).toMatchObject({ backupId: backup.backupId, restartRequired: true });
+    expect(appliedSetup).toBeUndefined();
+    expect(
+      (await fetch(`${baseUrl}/backup/import`, { method: "DELETE" })).status,
+    ).toBe(204);
+    expect(await (await fetch(`${baseUrl}/backup/import`)).json()).toBeNull();
+  });
+
+  it("rejects path traversal and imports without a validated preview", async () => {
+    const request = {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ backupId: "../outside" }),
+    };
+    expect((await fetch(`${baseUrl}/backup/preview`, request)).status).toBe(
+      400,
+    );
+    expect(
+      (
+        await fetch(`${baseUrl}/backup/import`, {
+          ...request,
+          body: JSON.stringify({ backupId: "backup" }),
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it("blocks every import operation for an enterprise instance", async () => {
+    process.env["INSTANCE_KEY"] = "enterprise-instance";
+    resetEnv();
+    for (const [method, route] of [
+      ["GET", "import"],
+      ["DELETE", "import"],
+      ["POST", "import"],
+      ["POST", "preview"],
+    ]) {
+      expect(
+        (await fetch(`${baseUrl}/backup/${route}`, { method })).status,
+      ).toBe(409);
+    }
   });
 });
 

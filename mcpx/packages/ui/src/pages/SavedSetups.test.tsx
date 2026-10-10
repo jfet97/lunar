@@ -207,6 +207,20 @@ describe("SavedSetups", () => {
       destination: "/tmp/mcpx-backups/backup-1",
       included: ["config/app.yaml", ".mcpx/tokens/example-tokens.json"],
       omitted: [{ item: "Claude config", reason: "Not mounted" }],
+      recovery: {
+        guide: "RESTORE.md",
+        requirements: [],
+        servers: [
+          {
+            name: "atlassian-media",
+            transport: "streamable-http",
+            files: [],
+            requiredEnvironment: ["MEDIA_TOKEN"],
+            requiredSecrets: [],
+            note: "Recreate this service separately.",
+          },
+        ],
+      },
     };
     vi.mocked(useExportLocalBackup).mockReturnValue({
       mutate: (
@@ -220,12 +234,17 @@ describe("SavedSetups", () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Export Full Backup" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Export Gateway Backup" }),
+    );
 
     expect(screen.getByText("/tmp/mcpx-backups/backup-1")).toBeVisible();
     expect(screen.getByText(".mcpx/tokens/example-tokens.json")).toBeVisible();
     expect(screen.getByText("Claude config:")).toBeVisible();
     expect(screen.getByText("Not mounted")).toBeVisible();
+    expect(screen.getByText("RESTORE.md")).toBeVisible();
+    expect(screen.getByText("atlassian-media:")).toBeVisible();
+    expect(screen.getByText(/Required environment: MEDIA_TOKEN/)).toBeVisible();
   });
 
   it("shows the server's actual export error", () => {
@@ -241,7 +260,9 @@ describe("SavedSetups", () => {
     });
 
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: "Export Full Backup" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Export Gateway Backup" }),
+    );
 
     expect(toast).toHaveBeenCalledWith(
       expect.objectContaining({

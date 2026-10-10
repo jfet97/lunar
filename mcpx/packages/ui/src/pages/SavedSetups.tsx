@@ -37,6 +37,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { SavedSetupSheet } from "@/components/saved-setups/SavedSetupSheet";
+import { BackupImportDialog } from "@/components/saved-setups/BackupImportDialog";
 import { useDomainIcon } from "@/hooks/useDomainIcon";
 import { EllipsisActions } from "@/components/ui/ellipsis-action";
 import { Separator } from "@/components/ui/separator";
@@ -125,6 +126,7 @@ function getActionConfig(
 
 export default function SavedSetups() {
   const navigate = useNavigate();
+  const [isImportOpen, setIsImportOpen] = useState(false);
   const skillsFeatureEnabled = useSkillsFeatureEnabled().data ?? false;
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(
@@ -337,9 +339,16 @@ export default function SavedSetups() {
 
   return (
     <div className="w-full p-6">
-      <div className="flex items-start justify-between">
+      <div className="flex flex-col items-start gap-3 xl:flex-row xl:justify-between">
         <h1 className="mcpx-page-title mb-3">Saved Setups</h1>
-        <div className="flex justify-end gap-2 mb-4">
+        <div className="flex flex-wrap gap-2 mb-4 xl:justify-end">
+          <Button
+            size="lg"
+            variant="outline"
+            onClick={() => setIsImportOpen(true)}
+          >
+            Import Gateway Backup
+          </Button>
           <Button
             size="lg"
             variant="outline"
@@ -347,7 +356,9 @@ export default function SavedSetups() {
             disabled={exportMutation.isPending}
           >
             <Download className="w-4 h-4" />
-            {exportMutation.isPending ? "Exporting..." : "Export Full Backup"}
+            {exportMutation.isPending
+              ? "Exporting..."
+              : "Export Gateway Backup"}
           </Button>
           <Button
             size={"lg"}
@@ -361,6 +372,9 @@ export default function SavedSetups() {
       </div>
 
       <div className="flex flex-col">
+        {isImportOpen && (
+          <BackupImportDialog onClose={() => setIsImportOpen(false)} />
+        )}
         {setups.length === 0 ? (
           <div className="bg-card rounded-xl border border-border p-12 text-center">
             <MonitorCog className="w-12 h-12 mx-auto text-muted-foreground mb-4" />
@@ -672,13 +686,51 @@ export default function SavedSetups() {
         >
           <DialogContent className="max-h-[80vh] max-w-2xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Full backup created</DialogTitle>
+              <DialogTitle>Gateway backup created</DialogTitle>
               <DialogDescription>
                 Saved to{" "}
                 <code className="break-all">{exportResult?.destination}</code>
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-4 text-sm">
+              <p className="text-muted-foreground">
+                Restore these files manually. Docker images and other
+                services&apos; data need to be obtained separately. Saved Setups
+                Restore applies a saved configuration only.
+              </p>
+              {exportResult?.recovery && (
+                <section>
+                  <h3 className="mb-2 font-semibold">
+                    Recovery on another machine
+                  </h3>
+                  <p>
+                    Read <code>{exportResult.recovery.guide}</code> in the
+                    backup directory for the restore steps.
+                  </p>
+                  <ul className="mt-2 list-disc space-y-1 pl-5">
+                    {exportResult.recovery.servers.map((server) => (
+                      <li key={server.name}>
+                        <span className="font-medium">{server.name}:</span>{" "}
+                        {server.note}
+                        {server.requiredEnvironment.length > 0 && (
+                          <span>
+                            {" "}
+                            Required environment:{" "}
+                            {server.requiredEnvironment.join(", ")}.
+                          </span>
+                        )}
+                        {server.requiredSecrets.length > 0 && (
+                          <span>
+                            {" "}
+                            Required secrets:{" "}
+                            {server.requiredSecrets.join(", ")}.
+                          </span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
               <section>
                 <h3 className="mb-2 font-semibold">Included</h3>
                 <ul className="list-disc space-y-1 pl-5">

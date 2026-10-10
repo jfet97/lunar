@@ -2,14 +2,20 @@ import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { LocalExportResponse } from "@mcpx/shared-model";
+import { LocalExportRecovery, LocalExportResponse } from "@mcpx/shared-model";
 import { TargetServer } from "../model/target-servers.js";
+import {
+  buildRecoveryReport,
+  renderRestoreGuide,
+} from "./local-export-recovery.js";
+import { companionFilesSchema } from "./local-export-companions.js";
 
 export interface LocalExportOptions {
   backupDirectory: string;
   appConfigPath: string;
   serversConfigPath: string;
   stateDirectory: string;
+  companionsPath?: string;
   composePath: string;
   composeSourceRoot: string;
   imagePath: string;
@@ -23,10 +29,12 @@ export interface LocalExportOptions {
 }
 
 interface ExportManifest {
+  schemaVersion: 2;
   backupId: string;
   createdAt: string;
   included: string[];
   omitted: LocalExportResponse["omitted"];
+  recovery: LocalExportRecovery;
 }
 
 export class LocalExportService {
@@ -158,6 +166,28 @@ export class LocalExportService {
         if (copied) included.push(`${file.destination} (${file.item})`);
       }
 
+      const companionFiles = await copyCompanionFiles(
+        this.options.companionsPath,
+        staging,
+        included,
+        omitted,
+      );
+      const recovery = buildRecoveryReport(
+        input.effectiveTargetServers,
+        companionFiles,
+      );
+      await writePrivateFile(
+        staging,
+        recovery.guide,
+        renderRestoreGuide(recovery),
+      );
+      included.push(recovery.guide);
+
+      omitted.push({
+        item: "Docker installation, images, and companion service data volumes",
+        reason:
+          "Recreate these on the destination machine. Only explicitly selected companion files are exported; container environments are not inspected.",
+      });
       omitted.push({
         item: "Hub-managed profile secrets and skill catalogs",
         reason:
@@ -170,10 +200,12 @@ export class LocalExportService {
       });
 
       const manifest: ExportManifest = {
+        schemaVersion: 2,
         backupId,
         createdAt,
         included,
         omitted,
+        recovery,
       };
       await writePrivateFile(
         staging,
@@ -182,7 +214,7 @@ export class LocalExportService {
       );
       await fs.rename(staging, destination);
 
-      return { backupId, createdAt, destination, included, omitted };
+      return { backupId, createdAt, destination, included, omitted, recovery };
     } catch (error) {
       await fs
         .rm(staging, { recursive: true, force: true })
@@ -193,6 +225,70 @@ export class LocalExportService {
       );
     }
   }
+}
+
+async function copyCompanionFiles(
+  descriptorPath: string | undefined,
+  staging: string,
+  included: string[],
+  omitted: LocalExportResponse["omitted"],
+): Promise<Map<string, string[]>> {
+  const result = new Map<string, string[]>();
+  if (!descriptorPath) return result;
+  const sourceRoot = path.dirname(path.resolve(descriptorPath));
+  const copied = await copySingleFile(
+    descriptorPath,
+    staging,
+    "companions/files.json",
+    omitted,
+    "Companion file selection",
+    sourceRoot,
+  );
+  if (!copied) {
+    throw new Error(
+      "Configured companion file selection is unavailable or unsafe",
+    );
+  }
+  let selection: unknown;
+  try {
+    selection = JSON.parse(
+      await fs.readFile(path.join(staging, "companions/files.json"), "utf8"),
+    );
+  } catch {
+    throw new Error("Companion file selection must contain valid JSON");
+  }
+  const parsed = companionFilesSchema.safeParse(selection);
+  if (!parsed.success) {
+    throw new Error(
+      "Invalid companion file selection; use unique service names and safe relative file paths",
+    );
+  }
+  included.push("companions/files.json (companion file selection)");
+  for (const service of parsed.data.services) {
+    const files: string[] = [];
+    for (const file of service.files) {
+      const destination = `companions/${service.name}/${file.destination}`;
+      const copiedFile = await copySingleFile(
+        path.resolve(sourceRoot, file.source),
+        staging,
+        destination,
+        omitted,
+        destination,
+        sourceRoot,
+      );
+      if (copiedFile) {
+        included.push(destination);
+        files.push(destination);
+      } else if (!omitted.some((entry) => entry.item === destination)) {
+        omitted.push({
+          item: destination,
+          reason: "Selected file is unavailable.",
+        });
+      }
+    }
+    result.set(service.name, files);
+  }
+  return result;
 }
 
 function serializeTargetServers(servers: TargetServer[]): string {
@@ -483,6 +579,9 @@ async function ensurePrivateDirectory(directory: string): Promise<void> {
 
 function excludedStateReason(name: string): string | undefined {
   const normalized = name.toLowerCase();
+  if (normalized.startsWith(".mcpx-import-")) {
+    return "Previous import rollback files are retained separately and excluded.";
+  }
   if (
     normalized === "tool-embeddings.json" ||
     normalized.includes("embedding")

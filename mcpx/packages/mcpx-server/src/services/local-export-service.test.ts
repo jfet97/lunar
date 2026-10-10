@@ -216,6 +216,276 @@ describe("LocalExportService", () => {
     ).toEqual([]);
   });
 
+  it("exports only selected companion files and keeps credentials out of recovery metadata", async () => {
+    const selected = path.join(root, "selected-companions");
+    await fs.mkdir(selected);
+    const companionsPath = path.join(selected, "files.json");
+    await fs.writeFile(
+      companionsPath,
+      JSON.stringify({
+        version: 1,
+        services: [
+          {
+            name: "atlassian-media",
+            files: [
+              { source: "media.compose.yaml", destination: "compose.yaml" },
+              { source: "media.env", destination: ".env" },
+            ],
+          },
+        ],
+      }),
+    );
+    await fs.writeFile(
+      path.join(selected, "media.compose.yaml"),
+      "services: {}\n",
+    );
+    await fs.writeFile(
+      path.join(selected, "media.env"),
+      "API_TOKEN=selected-secret\n",
+    );
+    await fs.writeFile(
+      path.join(selected, "unselected.env"),
+      "DO_NOT_COPY=other-secret\n",
+    );
+    const service = new LocalExportService({ ...options, companionsPath });
+    const result = await service.create({
+      effectiveAppConfig: "app: true\n",
+      effectiveTargetServers: [
+        {
+          name: "atlassian-media",
+          type: "streamable-http",
+          url: "http://user:password@atlassian-media:9005/mcp?token=url-secret",
+          headers: {
+            Authorization: "literal-secret",
+            "X-Token": { fromEnv: "MEDIA_TOKEN" },
+            "X-Key": { fromSecret: "media-key" },
+            "X-Template": "Bearer {{MEDIA_TOKEN}}:{{EXTRA_HEADER_TOKEN}}",
+          },
+        },
+      ],
+    });
+    const file = path.join(
+      result.destination,
+      "companions/atlassian-media/.env",
+    );
+    expect(await fs.readFile(file, "utf8")).toBe("API_TOKEN=selected-secret\n");
+    expect((await fs.stat(file)).mode & 0o777).toBe(0o600);
+    expect(await listFiles(result.destination)).not.toContain("unselected.env");
+    expect(result.recovery?.servers).toEqual([
+      expect.objectContaining({
+        name: "atlassian-media",
+        host: "atlassian-media",
+        files: [
+          "companions/atlassian-media/compose.yaml",
+          "companions/atlassian-media/.env",
+        ],
+        requiredEnvironment: ["EXTRA_HEADER_TOKEN", "MEDIA_TOKEN"],
+        requiredSecrets: ["media-key"],
+      }),
+    ]);
+    const manifest = await fs.readFile(
+      path.join(result.destination, "manifest.json"),
+      "utf8",
+    );
+    const guide = await fs.readFile(
+      path.join(result.destination, "RESTORE.md"),
+      "utf8",
+    );
+    const metadata = JSON.stringify(result) + manifest + guide;
+    for (const secret of [
+      "selected-secret",
+      "other-secret",
+      "url-secret",
+      "literal-secret",
+      "password",
+    ]) {
+      expect(metadata).not.toContain(secret);
+    }
+    expect(guide).toContain("MEDIA_TOKEN");
+    expect(guide).toContain("Use Import Gateway Backup");
+    expect(JSON.parse(manifest)).toMatchObject({
+      schemaVersion: 2,
+      recovery: result.recovery,
+    });
+  });
+
+  it("reports missing, directory, and symlink selections without sweeping adjacent files", async () => {
+    const selected = path.join(root, "selected");
+    await fs.mkdir(path.join(selected, "config"), { recursive: true });
+    await fs.writeFile(
+      path.join(selected, "config", "private.env"),
+      "hidden-secret",
+    );
+    await fs.symlink(
+      path.join(selected, "config"),
+      path.join(selected, "linked"),
+    );
+    const companionsPath = path.join(selected, "files.json");
+    await fs.writeFile(
+      companionsPath,
+      JSON.stringify({
+        version: 1,
+        services: [
+          {
+            name: "runtime-server",
+            files: [
+              { source: "missing.env", destination: ".env" },
+              { source: "config", destination: "directory" },
+              { source: "linked/private.env", destination: "secret.env" },
+            ],
+          },
+        ],
+      }),
+    );
+    const result = await new LocalExportService({
+      ...options,
+      companionsPath,
+    }).create({
+      effectiveAppConfig: "app: true\n",
+      effectiveTargetServers: [runtimeServer()],
+    });
+    expect(result.recovery?.servers[0]?.files).toEqual([]);
+    expect(result.omitted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ item: "companions/runtime-server/.env" }),
+        expect.objectContaining({
+          item: "companions/runtime-server/directory",
+        }),
+        expect.objectContaining({
+          item: "companions/runtime-server/secret.env",
+          reason: "A symbolic link in the source path was not followed.",
+        }),
+      ]),
+    );
+    expect(
+      (await listFiles(result.destination)).filter((file) =>
+        file.startsWith("companions/"),
+      ),
+    ).toEqual(["companions/files.json"]);
+  });
+
+  it.each([
+    [
+      "source traversal",
+      [
+        {
+          name: "service",
+          files: [{ source: "../private.env", destination: ".env" }],
+        },
+      ],
+    ],
+    [
+      "absolute source",
+      [
+        {
+          name: "service",
+          files: [{ source: "/private.env", destination: ".env" }],
+        },
+      ],
+    ],
+    [
+      "destination traversal",
+      [
+        {
+          name: "service",
+          files: [{ source: "file", destination: "../../config/mcp.json" }],
+        },
+      ],
+    ],
+    ["unsafe service name", [{ name: "..", files: [] }]],
+    [
+      "duplicate service names",
+      [
+        { name: "service", files: [] },
+        { name: "service", files: [] },
+      ],
+    ],
+    [
+      "case-only destination collision",
+      [
+        {
+          name: "service",
+          files: [
+            { source: "a", destination: "file" },
+            { source: "b", destination: "FILE" },
+          ],
+        },
+      ],
+    ],
+    [
+      "file-directory collision",
+      [
+        {
+          name: "service",
+          files: [
+            { source: "a", destination: "config" },
+            { source: "b", destination: "config/file" },
+          ],
+        },
+      ],
+    ],
+  ])("rejects %s without leaving a backup", async (_description, services) => {
+    const companionsPath = path.join(root, "files.json");
+    await fs.writeFile(
+      companionsPath,
+      JSON.stringify({ version: 1, services }),
+    );
+    const service = new LocalExportService({ ...options, companionsPath });
+    await expect(
+      service.create({
+        effectiveAppConfig: "app: true\n",
+        effectiveTargetServers: [],
+      }),
+    ).rejects.toThrow("Invalid companion file selection");
+    expect(await fs.readdir(options.backupDirectory)).toEqual([]);
+  });
+
+  it("fails an unavailable selection and reports malformed JSON without exposing its content", async () => {
+    const companionsPath = path.join(root, "files.json");
+    const service = new LocalExportService({ ...options, companionsPath });
+    const input = {
+      effectiveAppConfig: "app: true\n",
+      effectiveTargetServers: [],
+    };
+    await expect(service.create(input)).rejects.toThrow(
+      "selection is unavailable or unsafe",
+    );
+    await fs.writeFile(companionsPath, '{"token":"do-not-expose"');
+    await expect(service.create(input)).rejects.toThrow(
+      "must contain valid JSON",
+    );
+    expect(await fs.readdir(options.backupDirectory)).toEqual([]);
+  });
+
+  it("reports stdio installation and environment requirements without copying referenced files", async () => {
+    const result = await service.create({
+      effectiveAppConfig: "app: true\n",
+      effectiveTargetServers: [
+        {
+          name: "local-server",
+          type: "stdio",
+          command: "node",
+          args: ["/machine-specific/private-server.js", "argument-secret"],
+          env: {
+            TOKEN: { fromEnv: "UPSTREAM_TOKEN" },
+            KEY: { fromSecret: "upstream-key" },
+          },
+        },
+      ],
+    });
+    expect(result.recovery?.servers[0]).toMatchObject({
+      transport: "stdio",
+      files: [],
+      requiredEnvironment: ["UPSTREAM_TOKEN"],
+      requiredSecrets: ["upstream-key"],
+    });
+    expect(JSON.stringify(result)).not.toContain("private-server.js");
+    expect(JSON.stringify(result)).not.toContain("argument-secret");
+    expect(result.recovery?.servers[0]?.note).toContain(
+      "Install the command and packages separately",
+    );
+  });
+
   it("excludes a custom backup directory nested in .mcpx state", async () => {
     const tokenPath = path.join(options.stateDirectory, "tokens", "token.json");
     await fs.mkdir(path.dirname(tokenPath), { recursive: true });
@@ -236,9 +506,7 @@ describe("LocalExportService", () => {
         "utf8",
       ),
     ).toBe("durable-token");
-    expect(
-      await listFiles(result.destination),
-    ).not.toContain(".mcpx/exports");
+    expect(await listFiles(result.destination)).not.toContain(".mcpx/exports");
     expect(result.omitted).toContainEqual({
       item: ".mcpx/exports",
       reason: "Backup directories are excluded to prevent recursive exports.",
