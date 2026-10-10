@@ -51,6 +51,8 @@ The Control Plane helps you inspect live traffic and manage your MCPX instance.
 Setup instructions are available [here](https://docs.lunar.dev/mcpx/control_plane/).
 For standalone saved setups and local full exports, see
 [Local saved setups and full exports](./docs/local-saved-setups-and-export.md).
+For reconnection behavior after an upstream outage, see
+[Upstream connection recovery](./docs/upstream-recovery.md).
 
 
 ## Connecting to MCPX

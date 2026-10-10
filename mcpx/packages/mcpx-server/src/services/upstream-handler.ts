@@ -85,8 +85,8 @@ export interface UpstreamHandlerConfig {
   reconnectBaseDelayMs: number;
 }
 
-// Caps the per-attempt wait so we retry at least once per hour indefinitely.
-const MAX_RECONNECT_DELAY_MS = 60 * 60 * 1000;
+// cap retry waits at five minutes so recovered servers do not stay unavailable for an hour
+const MAX_RECONNECT_DELAY_MS = 5 * 60 * 1000;
 
 export interface TargetServerChangeNotifier {
   registerPostChangeHook(

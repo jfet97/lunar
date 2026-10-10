@@ -22,7 +22,7 @@ import {
 } from "./internal-capabilities-service.js";
 import { ManagementToolsService } from "./management-tools.js";
 
-describe("upstream OAuth logout", () => {
+describe("upstream recovery and OAuth logout", () => {
   let directory: string;
   let originalEnvironment: NodeJS.ProcessEnv;
 
@@ -129,10 +129,11 @@ describe("upstream OAuth logout", () => {
       },
     );
     const writeConfig = jest.fn();
+    const createConnection = jest.fn(async () => extended);
     const upstream = new UpstreamHandler(
       state,
       { writeTargetServers: writeConfig } as never,
-      { createConnection: async () => extended } as never,
+      { createConnection } as never,
       oauth,
       catalog as never,
       new ToolTokenEstimator(),
@@ -152,6 +153,7 @@ describe("upstream OAuth logout", () => {
       targetServer,
       upstream,
       extended,
+      createConnection,
       writeConfig,
       store,
       sessions,
@@ -214,6 +216,46 @@ describe("upstream OAuth logout", () => {
     if (!text) throw new Error("Expected a text tool result");
     return JSON.parse(text) as Record<string, unknown>;
   }
+
+  it("recovers within five minutes after a long outage without rewriting credentials", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    try {
+      const outage = new TypeError("fetch failed");
+      harness.extended.callTool.mockRejectedValue(outage);
+      harness.createConnection.mockRejectedValue(outage);
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow("fetch failed");
+      }
+      await jest.advanceTimersByTimeAsync(0);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connection-failed",
+      );
+      await jest.advanceTimersByTimeAsync(2 * 60 * 60 * 1000);
+
+      harness.createConnection.mockResolvedValue(harness.extended);
+      harness.extended.callTool.mockResolvedValue({ content: [] });
+      await jest.advanceTimersByTimeAsync(5 * 60 * 1000);
+
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connected",
+      );
+      expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(true);
+      await expect(
+        harness.upstream.callTool("docs", { name: "read" }),
+      ).resolves.toEqual({ content: [] });
+      expect(harness.writeConfig).toHaveBeenCalledTimes(1);
+      expect(await harness.provider.tokens()).toMatchObject({
+        access_token: "old-token",
+        refresh_token: "old-refresh",
+      });
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
 
   it.each(["docs", "Docs"])(
     "clears credentials and callbacks for %s, retains config and allows fresh login",
@@ -388,7 +430,9 @@ describe("upstream OAuth logout", () => {
       .spyOn(harness.store, "deleteAll")
       .mockRejectedValue(new Error("Unable to delete credentials"));
     try {
-      await expect(harness.upstream.removeClient("docs")).resolves.toBeUndefined();
+      await expect(
+        harness.upstream.removeClient("docs"),
+      ).resolves.toBeUndefined();
       expect(harness.upstream.servers).toEqual([]);
       expect(harness.writeConfig).toHaveBeenLastCalledWith([]);
     } finally {
