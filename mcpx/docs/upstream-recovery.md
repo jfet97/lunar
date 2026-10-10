@@ -14,15 +14,16 @@ Recovery retains the saved server configuration and authentication. A rebooted
 upstream does not normally require restarting MCPX or re-entering its token.
 Enabling a server controls tool availability; it does not force reconnection.
 
-## Local Telegram endpoint
+## Known recovery gaps
 
-The Raspfet deployment uses one hostname for two separate HTTPS endpoints:
+The shorter cap does not repair every recovery path:
 
-- `https://hooks.raspfet.dev/t3/telegram/main`: Telegram's incoming webhook,
-  authenticated with its webhook secret, on port 443.
-- `https://hooks.raspfet.dev:8443/mcp`: the LAN Telegram MCP used by MCPX,
-  authenticated with its MCP bearer token.
+- Capability discovery failures after OAuth completion or silent re-authentication
+  can leave a failed connection without scheduling another attempt.
+- SDK `RequestTimeout` and `ConnectionClosed` errors are currently excluded from
+  transport failures, so timed-out calls can incorrectly reset watchdog failures.
+- There is no per-server action to force an immediate retry while preserving
+  credentials. Enabling tools does not perform that action.
 
-MCPX must resolve that hostname to the Pi's LAN address to reach port 8443.
-A connection timeout should prompt a DNS and LAN reachability check before
-changing any credentials.
+These require separate fixes. DNS and network reachability also remain
+prerequisites; a reachable probe does not mean a scheduled retry has already run.
