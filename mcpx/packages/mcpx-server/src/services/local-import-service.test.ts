@@ -134,6 +134,68 @@ describe("LocalImportService", () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
+  it.each([0o755, 0o750])(
+    "preserves existing destination parent permissions %o",
+    async (mode) => {
+      const config = path.dirname(importOptions.appConfigPath);
+      await fs.chmod(config, mode);
+      await fs.chmod(importOptions.stateDirectory, mode);
+      const preview = await importer.preview(backupId);
+      await importer.stage({ backupId, fingerprint: preview.fingerprint });
+      await importer.applyPending();
+      expect((await fs.stat(config)).mode & 0o777).toBe(mode);
+      expect((await fs.stat(importOptions.stateDirectory)).mode & 0o777).toBe(
+        mode,
+      );
+    },
+  );
+
+  it.each(["My Service", "Café"])(
+    "restores OAuth state for server %s",
+    async (serverName) => {
+      const tokenDirectory = path.join(exportOptions.stateDirectory, "tokens");
+      for (const suffix of ["tokens.json", "client.json", "verifier.txt"]) {
+        await fs.rename(
+          path.join(tokenDirectory, `restored-${suffix}`),
+          path.join(tokenDirectory, `${serverName}-${suffix}`),
+        );
+      }
+      await fs.writeFile(
+        exportOptions.serversConfigPath,
+        JSON.stringify({
+          mcpServers: {
+            [serverName]: {
+              type: "streamable-http",
+              url: "https://example.com/mcp",
+            },
+          },
+        }),
+      );
+      const backup = await new LocalExportService(exportOptions).create({
+        effectiveAppConfig: stringify(DEFAULT_CONFIG),
+        effectiveTargetServers: [],
+      });
+      const preview = await importer.preview(backup.backupId);
+      expect(preview.serverNames).toEqual([serverName]);
+      expect(preview.oauthFileCount).toBe(3);
+      await importer.stage({
+        backupId: backup.backupId,
+        fingerprint: preview.fingerprint,
+      });
+      await importer.applyPending();
+      expect(
+        await fs.readFile(
+          path.join(
+            importOptions.stateDirectory,
+            "tokens",
+            `${serverName}-tokens.json`,
+          ),
+          "utf8",
+        ),
+      ).toContain("access-secret");
+    },
+  );
+
   it("previews without exposing credentials, queues without live changes, and restores on startup", async () => {
     const preview = await importer.preview(backupId);
     expect(preview).toMatchObject({

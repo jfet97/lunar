@@ -189,13 +189,16 @@ Published images target **Linux ARM64**, including Docker on Apple Silicon. The 
 
 For setup instructions and the control-plane UI, start with the [MCPX guide](mcpx/README.md). Preserve the gateway's configuration and `.mcpx` state in persistent volumes so settings, OAuth state, and local saved setups survive container replacement.
 
-To build the fork yourself, run this from the repository root:
+Build the local deployment image from the canonical checkout at
+`~/Developer/lunar-jfet97` on a clean, committed `main`:
 
 ```sh
-docker build --target mcpx -f mcpx/Dockerfile .
+bash mcpx/scripts/build-main-image.sh
 ```
 
-The build includes the shared core under `ai-gateway-shared/public`; the repository root is the required build context.
+The script verifies the branch and working tree, builds the full ARM64 image from
+the repository root, and tags and labels it with the `main` commit SHA. The build
+includes the shared core under `ai-gateway-shared/public`.
 
 Changes to MCPX, the shared core, or the publishing workflow on `main` run regression checks and publish an image. Pull requests touching MCPX also check types, changed-file lint, regressions, and the UI build. A push that only changes this root README does not trigger an image build. Publishing an image does not upgrade an existing installation.
 

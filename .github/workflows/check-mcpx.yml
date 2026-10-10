@@ -71,18 +71,20 @@ jobs:
           src/services/hub-downstream-session-client.test.ts
           src/server/lazy-tools.test.ts
           src/server/lazy-gateway.test.ts
+          src/server/json-body.test.ts
           src/services/management-tools.test.ts
           src/services/internal-capabilities-service.test.ts
           src/services/control-plane-service.test.ts
           src/services/upstream-logout.test.ts
           src/services/local-saved-setups.test.ts
           src/services/local-export-service.test.ts
+          src/services/local-import-service.test.ts
           src/server/control-plane.test.ts
           src/services/setup-manager.test.ts
           src/services/client-extension.test.ts
       - name: Check saved setup UI and API
         working-directory: mcpx/packages/ui
-        run: ../../node_modules/.bin/vitest run src/pages/SavedSetups.test.tsx src/lib/api.test.ts
+        run: ../../node_modules/.bin/vitest run src/pages/SavedSetups.test.tsx src/lib/api.test.ts src/components/saved-setups/BackupImportDialog.test.tsx
       - name: Build UI
         working-directory: mcpx
         run: npm run build:ui

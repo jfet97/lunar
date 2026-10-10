@@ -247,7 +247,7 @@ export class LocalImportService {
     const prepared: typeof targets = [];
     try {
       for (const entry of targets) {
-        await privateDirectory(path.dirname(entry.target));
+        await destinationDirectory(path.dirname(entry.target));
         const original = await optionalStat(entry.target);
         if (
           original &&
@@ -481,7 +481,12 @@ export class LocalImportService {
       if (!(await optionalStat(folder))) continue;
       await assertDirectory(folder);
       for (const name of (await fs.readdir(folder)).sort()) {
-        if (!/^[a-zA-Z0-9._-]+$/.test(name))
+        if (
+          name.startsWith(".") ||
+          path.basename(name) !== name ||
+          name.includes("\\") ||
+          [...name].some((character) => character.charCodeAt(0) < 32)
+        )
           throw new BackupImportError(
             "The backup contains an unsafe state file name.",
           );
@@ -606,6 +611,14 @@ async function privateDirectory(directory: string): Promise<void> {
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   await assertDirectory(directory);
   await fs.chmod(directory, 0o700);
+}
+
+async function destinationDirectory(directory: string): Promise<void> {
+  if (await optionalStat(directory)) {
+    await assertDirectory(directory);
+  } else {
+    await privateDirectory(directory);
+  }
 }
 
 async function optionalStat(
