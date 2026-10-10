@@ -219,6 +219,21 @@ export class ManagementToolsService implements InternalCapabilityProvider {
       activation(true),
       activation(false),
       {
+        name: "management_reconnect_server",
+        description:
+          "Retry one failed MCP connection immediately while preserving its configuration and credentials. Does nothing for connected, connecting, or pending-auth servers. Does not retry tool calls.",
+        schema: namedSchema,
+        idempotent: true,
+        execute: async (args): Promise<unknown> => {
+          const { name } = namedSchema.parse(args);
+          this.requireServer(name);
+          return {
+            name,
+            retried: await services.upstreamHandler.reconnectServer(name),
+          };
+        },
+      },
+      {
         name: "management_remove_server",
         description:
           "Delete an existing MCP server configuration and disconnect it. Saved OAuth authentication is also cleared. Create a backup first if recovery is needed.",

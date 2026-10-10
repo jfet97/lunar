@@ -458,13 +458,16 @@ describe("lazy Streamable HTTP gateway", () => {
           expect(names).not.toContain("mcpx__management_logout_server");
         } else {
           let lazyTools = (await client.listTools()).tools;
-          expect(lazyTools).toHaveLength(13);
+          expect(lazyTools).toHaveLength(14);
+          expect(lazyTools.map((tool) => tool.name)).toContain(
+            "mcpx__management_reconnect_server",
+          );
           expect(lazyTools.map((tool) => tool.name)).toContain(
             "mcpx__management_logout_server",
           );
           logoutAllowed = false;
           lazyTools = (await client.listTools()).tools;
-          expect(lazyTools).toHaveLength(12);
+          expect(lazyTools).toHaveLength(13);
           expect(lazyTools.map((tool) => tool.name)).toContain(
             "mcpx__management_add_server",
           );

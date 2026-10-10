@@ -13,6 +13,7 @@ const MANAGEMENT_CAPABILITY_NAMES = new Set([
   "management_update_server",
   "management_enable_server",
   "management_disable_server",
+  "management_reconnect_server",
   "management_remove_server",
   "management_create_backup",
   "management_login_server",

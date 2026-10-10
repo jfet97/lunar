@@ -11,6 +11,7 @@ import { InvalidGrantError } from "@modelcontextprotocol/sdk/server/auth/errors.
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { createUpstreamHttpTransport } from "./streamable-http-reconnection.js";
 import { Logger } from "winston";
 import {
   SSETargetServer,
@@ -648,7 +649,7 @@ export class OAuthConnectionHandler {
     const options = { authProvider, fetch: coalescer.wrap() };
     return targetServer.type === "sse"
       ? new SSEClientTransport(new URL(targetServer.url), options)
-      : new StreamableHTTPClientTransport(new URL(targetServer.url), options);
+      : createUpstreamHttpTransport(new URL(targetServer.url), options);
   }
 
   // Drop the flow entry, clear the provider's pending URL via completeAuthorization(),

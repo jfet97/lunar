@@ -77,7 +77,7 @@ export function buildAdminRouter(
   router.post("/reload", authGuard, async (_req, res) => {
     try {
       logger.info("Reloading target servers");
-      await services.upstreamHandler.initialize();
+      await services.upstreamHandler.reloadFromConfig();
       logger.debug(
         "Current clientsByService (global)",
         Object.fromEntries(services.upstreamHandler.clientsByService.entries()),

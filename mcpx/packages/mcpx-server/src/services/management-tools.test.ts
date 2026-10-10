@@ -59,6 +59,7 @@ function fixture() {
         userCode: "ABCD",
       }),
       logoutOAuthForServer: jest.fn().mockResolvedValue(undefined),
+      reconnectServer: jest.fn().mockResolvedValue(true),
     },
     setupManager: { captureCurrentSetup: jest.fn(() => setup) },
     localSavedSetups: { save: jest.fn().mockResolvedValue(saveResult) },
@@ -126,9 +127,9 @@ function json(response: CallToolResult) {
 }
 
 describe("built-in management tools", () => {
-  it("advertises nine schemas and destructive annotations", () => {
+  it("advertises ten schemas and destructive annotations", () => {
     const { tools } = fixture();
-    expect(tools).toHaveLength(9);
+    expect(tools).toHaveLength(10);
     for (const { definition } of tools)
       expect(definition.inputSchema.type).toBe("object");
     expect(
@@ -242,6 +243,21 @@ describe("built-in management tools", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("reconnects a failed server without replacing configuration or logging out", async () => {
+    const { call, services } = fixture();
+    expect(
+      json(await call("management_reconnect_server", { name: "DOCS" })),
+    ).toEqual({ name: "docs", retried: true });
+    expect(services.upstreamHandler.reconnectServer).toHaveBeenCalledWith(
+      "docs",
+    );
+    expect(services.controlPlane.updateTargetServer).not.toHaveBeenCalled();
+    expect(services.controlPlane.removeTargetServer).not.toHaveBeenCalled();
+    expect(
+      services.upstreamHandler.logoutOAuthForServer,
+    ).not.toHaveBeenCalled();
+  });
+
   it.each(["local", "hub"])(
     "routes small backups to the %s owner",
     async (owner) => {
@@ -340,20 +356,25 @@ describe("built-in management tools", () => {
     );
   });
 
-  it.each(["add", "enable", "disable", "remove", "login", "logout"])(
-    "rejects %s targeting the reserved mcpx server",
-    async (action) => {
-      const { call } = fixture();
-      const response = await call(`management_${action}_server`, {
-        name: " MCPX ",
-        ...(action === "add"
-          ? { config: { type: "sse", url: "https://example.com" } }
-          : {}),
-      });
-      expect(response.isError).toBe(true);
-      expect(json(response).message).toContain("Invalid");
-    },
-  );
+  it.each([
+    "add",
+    "enable",
+    "disable",
+    "reconnect",
+    "remove",
+    "login",
+    "logout",
+  ])("rejects %s targeting the reserved mcpx server", async (action) => {
+    const { call } = fixture();
+    const response = await call(`management_${action}_server`, {
+      name: " MCPX ",
+      ...(action === "add"
+        ? { config: { type: "sse", url: "https://example.com" } }
+        : {}),
+    });
+    expect(response.isError).toBe(true);
+    expect(json(response).message).toContain("Invalid");
+  });
 
   it("does not echo secrets in failures or allow arbitrary backup destinations", async () => {
     const { call, services } = fixture();
@@ -391,7 +412,7 @@ describe("built-in management tools", () => {
       new InternalCapabilitiesService(noOpLogger),
       registry,
     );
-    expect(registry.servers.get("mcpx")?.tools).toHaveLength(10);
+    expect(registry.servers.get("mcpx")?.tools).toHaveLength(11);
     expect(registry.servers.get("mcpx")?.tools?.[0]?.definition.name).toBe(
       "get_new_capabilities",
     );

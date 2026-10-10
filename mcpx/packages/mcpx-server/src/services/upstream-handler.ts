@@ -116,6 +116,8 @@ export class UpstreamHandler
   private _clientsByService: Map<string, TargetClient> = new Map();
   private targetServers: TargetServer[] = [];
   private initialized = false;
+  private initialization?: Promise<void>;
+  private reloadOperation?: Promise<void>;
   private tokenExpiryInterval: NodeJS.Timeout | null = null;
   private postChangeHooks = new Map<
     string,
@@ -140,6 +142,7 @@ export class UpstreamHandler
   private shuttingDown = false;
   private previousToolExtensions: ToolExtensions["services"] = {};
   private unsubscribeConfig?: () => void;
+  private unsubscribeCatalog?: () => void;
   private readonly authTargetVersions = new WeakMap<TargetServer, number>();
   private readonly authVersions = new Map<string, number>();
   private readonly logoutOperations = new Map<string, Promise<void>>();
@@ -251,6 +254,17 @@ export class UpstreamHandler
   }
 
   async initialize(): Promise<void> {
+    if (this.initialized) return;
+    if (this.initialization) return this.initialization;
+    this.initialization = this.initializeOnce();
+    try {
+      await this.initialization;
+    } finally {
+      this.initialization = undefined;
+    }
+  }
+
+  private async initializeOnce(): Promise<void> {
     if (env.READ_TARGET_SERVERS_FROM_FILE) {
       try {
         this.targetServers = this.serverConfigManager.readTargetServers();
@@ -287,7 +301,9 @@ export class UpstreamHandler
     });
     this.initialized = true;
     this.startTokenExpiryMonitor();
-    this.catalogManager.subscribe((change) => this.onCatalogChange(change));
+    this.unsubscribeCatalog = this.catalogManager.subscribe((change) =>
+      this.onCatalogChange(change),
+    );
 
     // Refresh on toolExtensions change — upstream won't notify since
     // extensions originate in our own config.
@@ -428,6 +444,8 @@ export class UpstreamHandler
 
     this.unsubscribeConfig?.();
     this.unsubscribeConfig = undefined;
+    this.unsubscribeCatalog?.();
+    this.unsubscribeCatalog = undefined;
 
     for (const [name, client] of this.connectedClientsByService()) {
       try {
@@ -713,9 +731,6 @@ export class UpstreamHandler
     const client = await this.safeInitiateClient(targetServer);
     this.serverConfigManager.writeTargetServers(this.targetServers);
     await this.recordClientUpsert(client);
-    if (isConnectionFailed(client)) {
-      this.enqueueReconnect(targetServer.name);
-    }
     this.logger.info("Client added", { name: targetServer.name });
   }
 
@@ -752,11 +767,55 @@ export class UpstreamHandler
         const client = await this.safeInitiateClient(server);
         if (!client) return;
         await this.recordClientUpsert(client);
-        if (isConnectionFailed(client)) {
-          this.enqueueReconnect(server.name);
-        }
       }),
     );
+  }
+
+  /** Reload configured upstreams without duplicating subscriptions or deleting authentication. */
+  async reloadFromConfig(): Promise<void> {
+    if (this.reloadOperation) return this.reloadOperation;
+    this.reloadOperation = this.performConfigReload();
+    try {
+      await this.reloadOperation;
+    } finally {
+      this.reloadOperation = undefined;
+    }
+  }
+
+  private async performConfigReload(): Promise<void> {
+    await this.initialize();
+    if (this.shuttingDown) throw new Error("Upstream handler is shutting down");
+    const configured = env.READ_TARGET_SERVERS_FROM_FILE
+      ? this.serverConfigManager.readTargetServers()
+      : this.targetServers;
+    const previous = [...this._clientsByService.values()];
+    for (const timer of this.reconnectQueue.values()) clearTimeout(timer);
+    this.reconnectQueue.clear();
+    this.reconnectAttemptsByServer.clear();
+    this._watchdog.shutdown();
+    this.targetServers = configured.map((server) => ({ ...server }));
+    for (const client of previous) {
+      const name = normalizeServerName(client.targetServer.name);
+      this.authVersions.set(name, (this.authVersions.get(name) ?? 0) + 1);
+      this.oauthConnectionHandler.cancelPendingOAuth(client.targetServer.name);
+      this.authRecoveryByService.delete(name);
+      this.recordClientRemoved(name);
+    }
+    await Promise.all(
+      previous.filter(isConnected).map(async (client) => {
+        await client.extendedClient.close().catch((error) => {
+          this.logger.warn(
+            "Failed to close client during configuration reload",
+            {
+              name: client.targetServer.name,
+              error: loggableError(error),
+            },
+          );
+        });
+      }),
+    );
+    await this.reloadClients();
+    this.systemState.clearConfigError();
   }
 
   // A method to reuse existing OAuth tokens if available.
@@ -924,6 +983,14 @@ export class UpstreamHandler
 
     this._clientsByService.set(normalizedName, newTargetClient);
 
+    if (!isConnected(newTargetClient)) {
+      this._watchdog.unwatch(normalizedName);
+      this.cancelReconnect(normalizedName);
+      if (isConnectionFailed(newTargetClient)) {
+        this.enqueueReconnect(normalizedName);
+      }
+    }
+
     if (isConnected(newTargetClient)) {
       this.cancelReconnect(newTargetClient.targetServer.name);
       this.reconnectAttemptsByServer.delete(normalizedName);
@@ -943,7 +1010,7 @@ export class UpstreamHandler
           ),
         );
       }
-      this._watchdog.watch(newTargetClient.targetServer.name);
+      this._watchdog.watch(normalizedName);
       // Registry already populated by finalizeConnection.
       void this.kickoffPromptMessagesFetch(serverName, newTargetClient);
     } else if (newTargetClient._state === "pending-auth") {
@@ -1029,9 +1096,17 @@ export class UpstreamHandler
         );
         return { _state: "connected", targetServer, extendedClient };
       })
-      .catch((e): TargetClient => {
+      .catch(async (e): Promise<TargetClient> => {
+        await extendedClient.close().catch((closeError) => {
+          this.logger.warn(
+            "Failed to close client after capability load failed",
+            {
+              name: targetServer.name,
+              error: loggableError(closeError),
+            },
+          );
+        });
         if (this.isAuthTargetRevoked(targetServer)) {
-          void extendedClient.close().catch(() => undefined);
           throw e;
         }
         this.logger.warn("Failed to load capabilities on connect", {
@@ -1106,12 +1181,12 @@ export class UpstreamHandler
   private recordClientRemoved(name: string): void {
     const normalizedName = normalizeServerName(name);
     this.dropListChangedSubscriptions(normalizedName);
-    this._watchdog.unwatch(name);
+    this._watchdog.unwatch(normalizedName);
     this.cancelReconnect(name);
     this.reconnectAttemptsByServer.delete(normalizedName);
     this._clientsByService.delete(normalizedName);
     this.capabilityRegistry.unregisterServer(normalizedName);
-    this.systemState.recordTargetServerDisconnected({ name });
+    this.systemState.recordTargetServerDisconnected({ name: normalizedName });
     this.notifyPostChangeHooks();
   }
 
@@ -1172,20 +1247,29 @@ export class UpstreamHandler
       targetServer: existing.targetServer,
       error: lastError,
     });
-    this.enqueueReconnect(name);
+  }
+
+  /** Retry one failed connection immediately without changing its configuration or credentials. */
+  async reconnectServer(name: string): Promise<boolean> {
+    const normalizedName = normalizeServerName(name);
+    const existing = this._clientsByService.get(normalizedName);
+    if (this.shuttingDown || !existing || !isConnectionFailed(existing)) {
+      return false;
+    }
+    this.cancelReconnect(normalizedName);
+    this.reconnectAttemptsByServer.delete(normalizedName);
+    await this.runReconnect(normalizedName);
+    return true;
   }
 
   private enqueueReconnect(name: string): void {
     // A reconnect already in flight during shutdown must not reschedule itself.
     if (this.shuttingDown) return;
-    if (
-      this._clientsByService.get(normalizeServerName(name))?._state ===
-      "pending-auth"
-    )
-      return;
-    this._watchdog.unwatch(name);
-    this.cancelReconnect(name);
     const normalizedName = normalizeServerName(name);
+    const existing = this._clientsByService.get(normalizedName);
+    if (!existing || !isConnectionFailed(existing)) return;
+    this._watchdog.unwatch(normalizedName);
+    this.cancelReconnect(normalizedName);
     const attempts = this.reconnectAttemptsByServer.get(normalizedName) ?? 0;
     const delay = this.reconnectDelay(attempts);
     this.logger.debug("Scheduling upstream server reconnect", {
@@ -1218,13 +1302,45 @@ export class UpstreamHandler
   }
 
   private async runReconnect(name: string): Promise<void> {
-    const shouldRetry = await this.attemptReconnect(name);
-    if (shouldRetry) {
+    try {
+      const shouldRetry = await this.attemptReconnect(name);
+      if (!shouldRetry) return;
       const normalizedName = normalizeServerName(name);
       const attempts =
         (this.reconnectAttemptsByServer.get(normalizedName) ?? 0) + 1;
       this.reconnectAttemptsByServer.set(normalizedName, attempts);
       this.enqueueReconnect(name);
+    } catch (error) {
+      this.logger.error("Unexpected upstream reconnect failure", {
+        name,
+        error: loggableError(error),
+      });
+      const normalizedName = normalizeServerName(name);
+      const existing = this._clientsByService.get(normalizedName);
+      if (
+        this.shuttingDown ||
+        !existing ||
+        isConnected(existing) ||
+        existing._state === "pending-auth" ||
+        this.isAuthTargetRevoked(existing.targetServer)
+      )
+        return;
+      const attempts =
+        (this.reconnectAttemptsByServer.get(normalizedName) ?? 0) + 1;
+      this.reconnectAttemptsByServer.set(normalizedName, attempts);
+      try {
+        await this.recordClientUpsert({
+          _state: "connection-failed",
+          targetServer: existing.targetServer,
+          error: makeError(error),
+        });
+      } catch (stateError) {
+        this.logger.error("Failed to publish upstream reconnect state", {
+          name,
+          error: loggableError(stateError),
+        });
+        this.enqueueReconnect(normalizedName);
+      }
     }
   }
 
@@ -1232,7 +1348,7 @@ export class UpstreamHandler
     const normalizedName = normalizeServerName(name);
     const existing = this._clientsByService.get(normalizedName);
 
-    if (!existing || isConnected(existing)) {
+    if (!existing || !isConnectionFailed(existing)) {
       return false;
     }
 
@@ -1251,7 +1367,7 @@ export class UpstreamHandler
     });
 
     // Keep retrying until connected or server is removed.
-    return !isConnected(newClient);
+    return isConnectionFailed(newClient);
   }
 
   private notifyPostChangeHooks(): void {
@@ -1450,15 +1566,15 @@ export class UpstreamHandler
     const { name } = client.targetServer;
     try {
       const result = await action(client.extendedClient);
-      this._watchdog.reportSuccess(name);
+      this._watchdog.reportSuccess(normalizeServerName(name));
       return result;
     } catch (e) {
       // Any answer, even an error one, proves the server is reachable. Only a
       // transport failure counts against it, and the watchdog threshold decides.
       if (isTransportError(e) && !isAuthenticationError(e)) {
-        this._watchdog.reportFailure(name, makeError(e));
+        this._watchdog.reportFailure(normalizeServerName(name), makeError(e));
       } else {
-        this._watchdog.reportSuccess(name);
+        this._watchdog.reportSuccess(normalizeServerName(name));
       }
       if (isAuthenticationError(e)) {
         const recovered = await this.handleAuthFailure(client, context);
@@ -1567,7 +1683,6 @@ export class UpstreamHandler
         targetServer,
         error: new Error("Server unreachable during re-auth"),
       });
-      this.enqueueReconnect(name);
     }
     return null;
   }

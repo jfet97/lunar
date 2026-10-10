@@ -8,6 +8,7 @@ import {
   ExtendedClient,
   ExtendedClientBuilder,
   extractToolParameters,
+  isTransportError,
   OriginalClientI,
 } from "./client-extension.js";
 import { noOpLogger } from "@aigw/core/logging";
@@ -18,6 +19,26 @@ import {
   ExtensionDescription,
   ServiceToolExtensions,
 } from "../model/config/tool-extensions.js";
+
+describe("transport failure classification", () => {
+  it.each([ErrorCode.RequestTimeout, ErrorCode.ConnectionClosed])(
+    "counts SDK error %s as a failure",
+    (code) => {
+      expect(isTransportError(new McpError(code, "connection failed"))).toBe(
+        true,
+      );
+    },
+  );
+  it.each([
+    ErrorCode.InvalidParams,
+    ErrorCode.MethodNotFound,
+    ErrorCode.InternalError,
+  ])("keeps MCP application error %s reachable", (code) => {
+    expect(isTransportError(new McpError(code, "application error"))).toBe(
+      false,
+    );
+  });
+});
 
 describe("extractToolParameters", () => {
   it("should return empty array when inputSchema has no properties", () => {

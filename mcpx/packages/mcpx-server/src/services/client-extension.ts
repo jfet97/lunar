@@ -173,10 +173,14 @@ export class ExtendedClientBuilder {
   }
 }
 
-// Transport errors (network down, connection reset, timeout) are plain Errors.
-// MCP application errors (tool not found, invalid params) are McpError instances.
+// SDK timeouts and closed connections are transport failures, not application replies
 export function isTransportError(e: unknown): boolean {
-  return e instanceof Error && !(e instanceof McpError);
+  return (
+    e instanceof Error &&
+    (!(e instanceof McpError) ||
+      e.code === ErrorCode.RequestTimeout ||
+      e.code === ErrorCode.ConnectionClosed)
+  );
 }
 
 export function isMethodNotFoundError(e: unknown): boolean {

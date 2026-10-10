@@ -2,7 +2,7 @@
 
 Connect an MCP client to `http://localhost:9000/mcp/lazy` to expose four
 discovery tools and permitted built-in management tools instead of the complete
-upstream catalog. The default owner sees nine management tools. This endpoint
+upstream catalog. The default owner sees ten management tools. This endpoint
 is built into MCPX and uses the same authentication, upstream connections,
 permissions, and sessions. The existing `/mcp` and `/sse` endpoints remain
 available for clients that need the complete catalog.

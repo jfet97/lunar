@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { noOpLogger } from "@aigw/core/logging";
 import { ManualClock } from "@aigw/core/time";
 import { ConfigService, DEFAULT_CONFIG } from "../config.js";
@@ -13,8 +14,11 @@ import { DiskTokenStore } from "./disk-token-store.js";
 import { OAuthConnectionHandler } from "./oauth-connection-handler.js";
 import { SystemStateTracker } from "./system-state.js";
 import { ToolTokenEstimator } from "./tool-token-estimator.js";
-import { UpstreamHandler } from "./upstream-handler.js";
-import type { ExtendedClientI } from "./client-extension.js";
+import {
+  UpstreamHandler,
+  type UpstreamHandlerConfig,
+} from "./upstream-handler.js";
+import type { ExtendedClientI, PingOutcome } from "./client-extension.js";
 import { ControlPlaneService } from "./control-plane-service.js";
 import {
   InternalCapabilitiesService,
@@ -45,7 +49,10 @@ describe("upstream recovery and OAuth logout", () => {
     await fs.rm(directory, { recursive: true, force: true });
   });
 
-  async function makeHarness(serverName = "docs") {
+  async function makeHarness(
+    serverName = "docs",
+    overrides: Partial<UpstreamHandlerConfig> = {},
+  ) {
     const targetServer: RemoteTargetServer = {
       name: serverName,
       type: "streamable-http",
@@ -58,8 +65,9 @@ describe("upstream recovery and OAuth logout", () => {
       noOpLogger,
     );
     await config.initialize();
+    const unsubscribeCatalog = jest.fn();
     const catalog = {
-      subscribe: () => () => {},
+      subscribe: jest.fn(() => unsubscribeCatalog),
       getCatalog: () => [],
       getDisplayNameByName: () => undefined,
       getDisplayNameById: () => undefined,
@@ -99,6 +107,7 @@ describe("upstream recovery and OAuth logout", () => {
     });
     const extended = {
       close: jest.fn(async () => {}),
+      isAlive: jest.fn(async (): Promise<PingOutcome> => null),
       onToolsListChanged: () => () => {},
       onPromptsListChanged: () => () => {},
       listTools: jest.fn(async () => ({
@@ -129,10 +138,14 @@ describe("upstream recovery and OAuth logout", () => {
       },
     );
     const writeConfig = jest.fn();
+    const readConfig = jest.fn(() => [targetServer]);
     const createConnection = jest.fn(async () => extended);
     const upstream = new UpstreamHandler(
       state,
-      { writeTargetServers: writeConfig } as never,
+      {
+        writeTargetServers: writeConfig,
+        readTargetServers: readConfig,
+      } as never,
       { createConnection } as never,
       oauth,
       catalog as never,
@@ -146,6 +159,7 @@ describe("upstream recovery and OAuth logout", () => {
         pingTimeoutMs: 100,
         pingFailureThreshold: 3,
         reconnectBaseDelayMs: 10,
+        ...overrides,
       },
     );
     await upstream.addClient(targetServer);
@@ -154,6 +168,9 @@ describe("upstream recovery and OAuth logout", () => {
       upstream,
       extended,
       createConnection,
+      readConfig,
+      catalog,
+      unsubscribeCatalog,
       writeConfig,
       store,
       sessions,
@@ -251,6 +268,262 @@ describe("upstream recovery and OAuth logout", () => {
         access_token: "old-token",
         refresh_token: "old-refresh",
       });
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
+  it("schedules recovery when capability discovery fails after silent OAuth recovery", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    try {
+      harness.extended.callTool.mockRejectedValueOnce(
+        new Error("401 Unauthorized"),
+      );
+      harness.extended.listTools.mockRejectedValueOnce(
+        new Error("fetch failed"),
+      );
+      jest
+        .spyOn(harness.oauth, "safeTryWithExistingTokens")
+        .mockResolvedValue(harness.extended as unknown as ExtendedClientI);
+      await expect(
+        harness.upstream.callTool("docs", { name: "read" }),
+      ).rejects.toThrow();
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connection-failed",
+      );
+      await jest.advanceTimersByTimeAsync(10);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connected",
+      );
+      expect(harness.createConnection).toHaveBeenCalledTimes(2);
+      expect(harness.writeConfig).toHaveBeenCalledTimes(1);
+      expect(await harness.provider.tokens()).toMatchObject({
+        access_token: "old-token",
+      });
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
+  it.each([
+    ["docs", ErrorCode.RequestTimeout],
+    ["Docs", ErrorCode.ConnectionClosed],
+  ])(
+    "counts SDK failures for %s without replaying calls",
+    async (name, code) => {
+      jest.useFakeTimers();
+      const harness = await makeHarness(String(name));
+      try {
+        harness.extended.callTool.mockRejectedValue(
+          new McpError(Number(code), "Request failed"),
+        );
+        for (let attempt = 0; attempt < 3; attempt++) {
+          await expect(
+            harness.upstream.callTool(String(name), { name: "read" }),
+          ).rejects.toThrow();
+        }
+        await jest.advanceTimersByTimeAsync(0);
+        expect(harness.state.export().targetServers[0]?.state.type).toBe(
+          "connection-failed",
+        );
+        await jest.advanceTimersByTimeAsync(10);
+        expect(harness.createConnection).toHaveBeenCalledTimes(2);
+        expect(harness.extended.callTool).toHaveBeenCalledTimes(3);
+        expect(harness.state.export().targetServers[0]?.state.type).toBe(
+          "connected",
+        );
+      } finally {
+        await harness.upstream.shutdown();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it("does not let timed-out calls reset failed pings", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness("docs", { pingIntervalMs: 10 });
+    try {
+      harness.extended.isAlive.mockResolvedValue(new Error("unreachable"));
+      harness.extended.callTool.mockRejectedValue(
+        new McpError(ErrorCode.RequestTimeout, "timed out"),
+      );
+      await jest.advanceTimersByTimeAsync(10);
+      await expect(
+        harness.upstream.callTool("docs", { name: "read" }),
+      ).rejects.toThrow();
+      await jest.advanceTimersByTimeAsync(10);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connection-failed",
+      );
+      await jest.advanceTimersByTimeAsync(10);
+      expect(harness.createConnection).toHaveBeenCalledTimes(2);
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
+  it("retries one failed server immediately, coalesces concurrent requests, and preserves credentials", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    try {
+      harness.extended.callTool.mockRejectedValue(new Error("fetch failed"));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+      }
+      await jest.advanceTimersByTimeAsync(0);
+      let finish!: (client: typeof harness.extended) => void;
+      harness.createConnection.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const first = harness.upstream.reconnectServer("Docs");
+      await jest.advanceTimersByTimeAsync(0);
+      expect(await harness.upstream.reconnectServer("docs")).toBe(false);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(harness.createConnection).toHaveBeenCalledTimes(2);
+      finish(harness.extended);
+      expect(await first).toBe(true);
+      expect(await harness.upstream.reconnectServer("docs")).toBe(false);
+      await jest.advanceTimersByTimeAsync(5 * 60_000);
+      expect(harness.createConnection).toHaveBeenCalledTimes(2);
+      expect(harness.writeConfig).toHaveBeenCalledTimes(1);
+      expect(await harness.provider.tokens()).toMatchObject({
+        access_token: "old-token",
+      });
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not force retry a pending OAuth login", async () => {
+    const harness = await makeHarness();
+    try {
+      await harness.upstream.logoutOAuthForServer("docs");
+      expect(await harness.upstream.reconnectServer("docs")).toBe(false);
+      expect(harness.createConnection).toHaveBeenCalledTimes(1);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "pending-auth",
+      );
+    } finally {
+      await harness.upstream.shutdown();
+    }
+  });
+
+  it("reloads configuration without duplicating subscriptions or retrying removed servers", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    const subscribe = jest.spyOn(harness.config, "subscribe");
+    const intervals = jest.spyOn(global, "setInterval");
+    const initialCatalogSubscribers =
+      harness.catalog.subscribe.mock.calls.length;
+    try {
+      await harness.upstream.initialize();
+      await harness.upstream.initialize();
+      await harness.upstream.reloadFromConfig();
+      await harness.upstream.reloadFromConfig();
+      expect(harness.catalog.subscribe).toHaveBeenCalledTimes(
+        initialCatalogSubscribers + 1,
+      );
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      expect(intervals).toHaveBeenCalledTimes(1);
+      expect(await harness.provider.tokens()).toMatchObject({
+        access_token: "old-token",
+      });
+
+      harness.extended.callTool.mockRejectedValue(new Error("fetch failed"));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+      }
+      await jest.advanceTimersByTimeAsync(0);
+      harness.readConfig.mockReturnValue([]);
+      await harness.upstream.reloadFromConfig();
+      const attempts = harness.createConnection.mock.calls.length;
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(harness.createConnection).toHaveBeenCalledTimes(attempts);
+      expect(harness.upstream.servers).toEqual([]);
+      expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(false);
+      expect(await harness.provider.tokens()).toMatchObject({
+        access_token: "old-token",
+      });
+    } finally {
+      await harness.upstream.shutdown();
+      expect(harness.unsubscribeCatalog).toHaveBeenCalledTimes(1);
+      subscribe.mockRestore();
+      intervals.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a reconnect that completes after a configuration reload removes its server", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    try {
+      await harness.upstream.initialize();
+      harness.extended.callTool.mockRejectedValue(new Error("fetch failed"));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+      }
+      await jest.advanceTimersByTimeAsync(0);
+      let finish!: (client: typeof harness.extended) => void;
+      harness.createConnection.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+      const reconnect = harness.upstream.reconnectServer("docs");
+      await jest.advanceTimersByTimeAsync(0);
+      harness.readConfig.mockReturnValue([]);
+      await harness.upstream.reloadFromConfig();
+      finish(harness.extended);
+      await reconnect;
+      expect(harness.upstream.servers).toEqual([]);
+      expect(harness.resolver.resolveToolCall("docs__read", {}).ok).toBe(false);
+      await jest.advanceTimersByTimeAsync(60_000);
+      expect(harness.createConnection).toHaveBeenCalledTimes(3);
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps retrying after an unexpected state-publication failure", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness();
+    try {
+      harness.extended.callTool.mockRejectedValue(new Error("fetch failed"));
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+      }
+      await jest.advanceTimersByTimeAsync(0);
+      jest
+        .spyOn(harness.state, "recordTargetServerConnection")
+        .mockImplementationOnce(() => {
+          throw new Error("state publication failed");
+        });
+      await jest.advanceTimersByTimeAsync(10);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connection-failed",
+      );
+      await jest.advanceTimersByTimeAsync(20);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connected",
+      );
     } finally {
       await harness.upstream.shutdown();
       jest.useRealTimers();

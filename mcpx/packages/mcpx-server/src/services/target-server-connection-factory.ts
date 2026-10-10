@@ -2,8 +2,8 @@ import { compactRecord } from "@aigw/core/data";
 import { loggableError } from "@aigw/core/logging";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import { createUpstreamHttpTransport } from "./streamable-http-reconnection.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Logger } from "winston";
 import {
@@ -194,7 +194,7 @@ export class TargetServerConnectionFactory {
       const transport =
         targetServer.type === "sse"
           ? new SSEClientTransport(new URL(targetServer.url), { requestInit })
-          : new StreamableHTTPClientTransport(new URL(targetServer.url), {
+          : createUpstreamHttpTransport(new URL(targetServer.url), {
               requestInit,
             });
       const extendedClient = await this.connectAndExtendClient(

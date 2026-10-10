@@ -15,12 +15,12 @@ if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
 fi
 
 revision="$(git rev-parse HEAD)"
-image="ghcr.io/jfet97/mcpx:$revision"
+image="ghcr.io/jfet97-home/mcpx:$revision"
 docker --context "$docker_context" build \
   --platform linux/arm64 \
   --target mcpx \
   --file mcpx/Dockerfile \
-  --label org.opencontainers.image.source=https://github.com/jfet97/lunar \
+  --label org.opencontainers.image.source=https://github.com/jfet97-home/lunar \
   --label "org.opencontainers.image.revision=$revision" \
   --label org.opencontainers.image.ref.name=main \
   --tag "$image" \
