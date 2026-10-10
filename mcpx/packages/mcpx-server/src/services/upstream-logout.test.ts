@@ -366,6 +366,31 @@ describe("upstream recovery and OAuth logout", () => {
     }
   });
 
+  it("does not reconnect a healthy pinging server because parallel tool calls are slow", async () => {
+    jest.useFakeTimers();
+    const harness = await makeHarness("docs", { pingIntervalMs: 10 });
+    try {
+      await jest.advanceTimersByTimeAsync(10);
+      harness.extended.callTool.mockRejectedValue(
+        new McpError(ErrorCode.RequestTimeout, "timed out"),
+      );
+      for (let attempt = 0; attempt < 3; attempt++) {
+        await expect(
+          harness.upstream.callTool("docs", { name: "read" }),
+        ).rejects.toThrow();
+      }
+      await jest.advanceTimersByTimeAsync(30);
+      expect(harness.state.export().targetServers[0]?.state.type).toBe(
+        "connected",
+      );
+      expect(harness.createConnection).toHaveBeenCalledTimes(1);
+      expect(harness.extended.callTool).toHaveBeenCalledTimes(3);
+    } finally {
+      await harness.upstream.shutdown();
+      jest.useRealTimers();
+    }
+  });
+
   it("retries one failed server immediately, coalesces concurrent requests, and preserves credentials", async () => {
     jest.useFakeTimers();
     const harness = await makeHarness();

@@ -10,6 +10,7 @@ interface UpstreamWatchdogConfig {
 
 interface WatchedServer {
   consecutiveFailures: number;
+  lastSuccessfulPingAt?: number;
   stopPing: () => void;
 }
 
@@ -65,6 +66,20 @@ export class UpstreamWatchdog {
     this.report(name, error);
   }
 
+  reportTimeout(name: string, error: Error): void {
+    const server = this.watched.get(name);
+    const recentPingWindow =
+      2 * (this.config.pingIntervalMs + this.config.pingTimeoutMs);
+    if (
+      server?.lastSuccessfulPingAt !== undefined &&
+      performance.now() - server.lastSuccessfulPingAt <= recentPingWindow
+    ) {
+      // a slow tool call is inconclusive; keep ping failures intact without declaring a healthy server down
+      return;
+    }
+    this.reportFailure(name, error);
+  }
+
   shutdown(): void {
     for (const name of Array.from(this.watched.keys())) {
       this.unwatch(name);
@@ -95,7 +110,13 @@ export class UpstreamWatchdog {
     if (!server) return;
     const consecutiveFailures =
       error === null ? 0 : server.consecutiveFailures + 1;
-    this.watched.set(name, { ...server, consecutiveFailures });
+    this.watched.set(name, {
+      ...server,
+      consecutiveFailures,
+      ...(source === "ping" && error === null
+        ? { lastSuccessfulPingAt: performance.now() }
+        : {}),
+    });
     if (error === null) return;
 
     const { pingFailureThreshold } = this.config;

@@ -183,6 +183,10 @@ export function isTransportError(e: unknown): boolean {
   );
 }
 
+export function isRequestTimeoutError(e: unknown): boolean {
+  return e instanceof McpError && e.code === ErrorCode.RequestTimeout;
+}
+
 export function isMethodNotFoundError(e: unknown): boolean {
   if (e instanceof McpError && e.code === ErrorCode.MethodNotFound) {
     return true;

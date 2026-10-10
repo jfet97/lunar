@@ -43,6 +43,7 @@ import { CatalogChange, CatalogManagerI } from "./catalog-manager.js";
 import {
   ExtendedClientI,
   isTransportError,
+  isRequestTimeoutError,
   PingOutcome,
 } from "./client-extension.js";
 import {
@@ -1569,9 +1570,15 @@ export class UpstreamHandler
       this._watchdog.reportSuccess(normalizeServerName(name));
       return result;
     } catch (e) {
-      // Any answer, even an error one, proves the server is reachable. Only a
+      // any answer, even an error one, proves the server is reachable. Only a
       // transport failure counts against it, and the watchdog threshold decides.
-      if (isTransportError(e) && !isAuthenticationError(e)) {
+      if (
+        context === "callTool" &&
+        isRequestTimeoutError(e) &&
+        !isAuthenticationError(e)
+      ) {
+        this._watchdog.reportTimeout(normalizeServerName(name), makeError(e));
+      } else if (isTransportError(e) && !isAuthenticationError(e)) {
         this._watchdog.reportFailure(normalizeServerName(name), makeError(e));
       } else {
         this._watchdog.reportSuccess(normalizeServerName(name));

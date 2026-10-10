@@ -14,6 +14,9 @@ Every failed connection transition schedules recovery, including capability
 discovery failures after OAuth completion or silent re-authentication. The old
 watchdog is stopped while reconnecting. SDK request timeouts and closed
 connections count as transport failures; ordinary MCP application errors do not.
+Tool-call timeouts are inconclusive while recent successful pings show the server
+is healthy. They never reset failed-ping history; without a recent heartbeat they
+count as failures, including on servers that do not implement ping.
 Unexpected recovery errors are caught and retried rather than escaping the timer.
 
 Recovery retains saved configuration and authentication. It retries connection
